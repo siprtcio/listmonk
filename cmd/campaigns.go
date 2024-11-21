@@ -68,12 +68,12 @@ func handleGetCampaigns(c echo.Context) error {
 	)
 
 	// Retrieve authid from headers (adjust header key if needed)
-	authid := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
-	if authid == "" {
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
 
-	res, total, err := app.core.QueryCampaigns(query, status, tags, orderBy, order, pg.Offset, pg.Limit, authid)
+	res, total, err := app.core.QueryCampaigns(query, status, tags, orderBy, order, pg.Offset, pg.Limit, authID)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func handleGetCampaignByAuthId(c echo.Context) error {
 	var (
 		app       = c.Get("app").(*App)
 		noBody, _ = strconv.ParseBool(c.QueryParam("no_body"))
-		authID    = c.Request().Header.Get("X-Auth-ID")
+		authID    = c.Param("authid")
 	)
 
 	// Attempt to retrieve the campaigns by AuthID
@@ -348,8 +348,8 @@ func handleUpdateCampaign(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
-	authid := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
-	if authid == "" {
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
 
@@ -358,7 +358,7 @@ func handleUpdateCampaign(c echo.Context) error {
 
 	}
 
-	cm, err := app.core.GetCampaign(id, "", "", authid)
+	cm, err := app.core.GetCampaign(id, "", "", authID)
 	if err != nil {
 		return err
 	}
@@ -381,7 +381,7 @@ func handleUpdateCampaign(c echo.Context) error {
 		o = c
 	}
 
-	out, err := app.core.UpdateCampaign(id, o.Campaign, o.ListIDs, o.MediaIDs, o.SendLater, authid)
+	out, err := app.core.UpdateCampaign(id, o.Campaign, o.ListIDs, o.MediaIDs, o.SendLater, authID)
 	if err != nil {
 		return err
 	}
@@ -395,8 +395,8 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
-	authid := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
-	if authid == "" {
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
 
@@ -412,7 +412,7 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 		return err
 	}
 
-	out, err := app.core.UpdateCampaignStatus(id, o.Status, authid)
+	out, err := app.core.UpdateCampaignStatus(id, o.Status, authID)
 	if err != nil {
 		return err
 	}
@@ -430,8 +430,8 @@ func handleUpdateCampaignArchive(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
-	authid := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
-	if authid == "" {
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
 
@@ -455,7 +455,7 @@ func handleUpdateCampaignArchive(c echo.Context) error {
 		req.ArchiveSlug = s
 	}
 
-	if err := app.core.UpdateCampaignArchive(id, req.Archive, req.TemplateID, req.Meta, req.ArchiveSlug, authid); err != nil {
+	if err := app.core.UpdateCampaignArchive(id, req.Archive, req.TemplateID, req.Meta, req.ArchiveSlug, authID); err != nil {
 		return err
 	}
 

@@ -38,7 +38,7 @@ func handleImportSubscribers(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	if count == 0 {
+	if count != len(opt.ListIDs) {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.Ts("import.invalidParams", "error", "{globals.terms.list}"))
 	}
 	// Validate mode.

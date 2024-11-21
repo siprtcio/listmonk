@@ -36,7 +36,7 @@ type Queries struct {
 	DeleteOrphanSubscribers         *sqlx.Stmt `query:"delete-orphan-subscribers"`
 	UnsubscribeByCampaign           *sqlx.Stmt `query:"unsubscribe-by-campaign"`
 	ExportSubscriberData            *sqlx.Stmt `query:"export-subscriber-data"`
-
+	CheckSubscribersByAuthID        *sqlx.Stmt `query:"check-subscriber-authid"`
 	// Non-prepared arbitrary subscriber queries.
 	QuerySubscribers                       string     `query:"query-subscribers"`
 	QuerySubscribersCount                  string     `query:"query-subscribers-count"`
@@ -49,15 +49,17 @@ type Queries struct {
 	DeleteSubscriptionsByQuery             string     `query:"delete-subscriptions-by-query"`
 	UnsubscribeSubscribersFromListsByQuery string     `query:"unsubscribe-subscribers-from-lists-by-query"`
 
-	CreateList         *sqlx.Stmt `query:"create-list"`
-	QueryLists         string     `query:"query-lists"`
-	GetLists           *sqlx.Stmt `query:"get-lists"`
-	GetListsByAuthID   *sqlx.Stmt `query:"get-lists-authid"`
-	CheckListsByAuthID *sqlx.Stmt `query:"check-lists-authid"`
-	GetListsByOptin    *sqlx.Stmt `query:"get-lists-by-optin"`
-	UpdateList         *sqlx.Stmt `query:"update-list"`
-	UpdateListsDate    *sqlx.Stmt `query:"update-lists-date"`
-	DeleteLists        *sqlx.Stmt `query:"delete-lists"`
+	CheckDuplicateList       *sqlx.Stmt `query:"check-duplicate-list"`
+	CheckDuplicateListUpdate *sqlx.Stmt `query:"check-duplicate-list-update"`
+	CreateList               *sqlx.Stmt `query:"create-list"`
+	QueryLists               string     `query:"query-lists"`
+	GetLists                 *sqlx.Stmt `query:"get-lists"`
+	GetListsByAuthID         *sqlx.Stmt `query:"get-lists-authid"`
+	CheckListsByAuthID       *sqlx.Stmt `query:"check-lists-authid"`
+	GetListsByOptin          *sqlx.Stmt `query:"get-lists-by-optin"`
+	UpdateList               *sqlx.Stmt `query:"update-list"`
+	UpdateListsDate          *sqlx.Stmt `query:"update-lists-date"`
+	DeleteLists              *sqlx.Stmt `query:"delete-lists"`
 
 	CreateCampaign               *sqlx.Stmt `query:"create-campaign"`
 	CheckInsertCampaignValidData *sqlx.Stmt `query:"check-insert-campaign-valid-data"`

@@ -30,12 +30,12 @@ const (
 type Store interface {
 	NextCampaigns(currentIDs []int64, sentCounts []int64) ([]*models.Campaign, error)
 	NextSubscribers(campID, limit int) ([]models.Subscriber, error)
-	GetCampaign(campID int, authid string) (*models.Campaign, error)
+	GetCampaign(campID int, authID string) (*models.Campaign, error)
 	GetCampaignByAuthId(AuthID string) (*models.Campaign, error)
-	GetAttachment(mediaID int, authid string) (models.Attachment, error)
-	UpdateCampaignStatus(campID int, status string, authid string) error
+	GetAttachment(mediaID int, authID string) (models.Attachment, error)
+	UpdateCampaignStatus(campID int, status string, authID string) error
 	UpdateCampaignCounts(campID int, toSend int, sent int, lastSubID int) error
-	CreateLink(url string, authid string) (string, error)
+	CreateLink(url string, authID string) (string, error)
 	BlocklistSubscriber(id int64) error
 	DeleteSubscriber(id int64) error
 }
@@ -566,7 +566,7 @@ func (m *Manager) isCampaignProcessing(id int) bool {
 
 // trackLink register a URL and return its UUID to be used in message templates
 // for tracking links.
-func (m *Manager) trackLink(url, campUUID, subUUID string, authid string) string {
+func (m *Manager) trackLink(url, campUUID, subUUID string, authID string) string {
 	url = strings.ReplaceAll(url, "&amp;", "&")
 
 	m.linksMut.RLock()
@@ -577,7 +577,7 @@ func (m *Manager) trackLink(url, campUUID, subUUID string, authid string) string
 	m.linksMut.RUnlock()
 
 	// Register link.
-	uu, err := m.store.CreateLink(url, authid)
+	uu, err := m.store.CreateLink(url, authID)
 	if err != nil {
 		m.log.Printf("error registering tracking for link '%s': %v", url, err)
 

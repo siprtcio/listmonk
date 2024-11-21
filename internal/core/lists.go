@@ -63,10 +63,10 @@ func (c *Core) GetLists(typ string, authID string) ([]models.List, error) {
 
 // check lists for authid
 // GetListsByAuthID gets all lists associated with a particular authid.
-func (c *Core) GetListsByAuthID(ListIDs []int, authid string) (int, error) {
+func (c *Core) GetListsByAuthID(ListIDs []int, authID string) (int, error) {
 
 	var count int
-	if err := c.q.CheckListsByAuthID.Get(&count, authid, pq.Array(ListIDs)); err != nil {
+	if err := c.q.CheckListsByAuthID.Get(&count, authID, pq.Array(ListIDs)); err != nil {
 		c.log.Printf("error fetching lists by authid: %v", err)
 		return 0, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.lists}", "error", pqErrMsg(err)))
@@ -177,6 +177,15 @@ func (c *Core) CreateList(l models.List, authID string) (models.List, error) {
 	l.UUID = uu.String()
 	l.AuthID = authID
 
+	var count int
+	if err := c.q.CheckDuplicateList.Get(&count, l.Name, l.AuthID); err != nil {
+		return models.List{}, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "dashboard stats", "error", pqErrMsg(err)))
+	}
+	if count > 0 {
+		return models.List{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.invalidFields", "name", "Name"))
+	}
+
 	// Insert and read ID.
 	var newID int
 
@@ -193,6 +202,15 @@ func (c *Core) CreateList(l models.List, authID string) (models.List, error) {
 func (c *Core) UpdateList(id int, l models.List, authID string) (models.List, error) {
 
 	l.AuthID = authID
+
+	var count int
+	if err := c.q.CheckDuplicateListUpdate.Get(&count, l.Name, l.AuthID, id); err != nil {
+		return models.List{}, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "dashboard stats", "error", pqErrMsg(err)))
+	}
+	if count > 0 {
+		return models.List{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.invalidFields", "name", "Name"))
+	}
 
 	res, err := c.q.UpdateList.Exec(id, l.Name, l.Type, l.Optin, pq.StringArray(normalizeTags(l.Tags)), l.Description, l.AuthID)
 	if err != nil {

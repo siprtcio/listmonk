@@ -20,7 +20,7 @@ CREATE TABLE subscribers (
 
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid          VARCHAR NOT NULL DEFAULT 'auth123'
+    authid          VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 DROP INDEX IF EXISTS idx_subs_email;
 DROP INDEX IF EXISTS idx_subs_email_authid; CREATE UNIQUE INDEX idx_subs_email_authid ON subscribers(LOWER(email), authid);
@@ -41,7 +41,7 @@ CREATE TABLE lists (
 
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid          VARCHAR NOT NULL DEFAULT 'auth123'
+    authid          VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 DROP INDEX IF EXISTS idx_lists_type; CREATE INDEX idx_lists_type ON lists(type);
 DROP INDEX IF EXISTS idx_lists_optin; CREATE INDEX idx_lists_optin ON lists(optin);
@@ -59,7 +59,7 @@ CREATE TABLE subscriber_lists (
 
     created_at         TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at         TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid             VARCHAR NOT NULL DEFAULT 'auth123',
+    authid             VARCHAR NOT NULL DEFAULT 'test-auth',
     PRIMARY KEY(subscriber_id, list_id)
 );
 DROP INDEX IF EXISTS idx_sub_lists_sub_id; CREATE INDEX idx_sub_lists_sub_id ON subscriber_lists(subscriber_id);
@@ -68,7 +68,7 @@ DROP INDEX IF EXISTS idx_sub_lists_status; CREATE INDEX idx_sub_lists_status ON 
 
 -- templates
 DROP TABLE IF EXISTS templates CASCADE;
-CREATE TABLE templates (
+CREATE TABLE template (
     id              SERIAL PRIMARY KEY,
     name            TEXT NOT NULL,
     type            template_type NOT NULL DEFAULT 'campaign',
@@ -78,7 +78,7 @@ CREATE TABLE templates (
 
     created_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid          VARCHAR NOT NULL DEFAULT 'auth123'
+    authid          VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 CREATE UNIQUE INDEX ON templates (is_default, authid) WHERE is_default = true;
 
@@ -122,7 +122,7 @@ CREATE TABLE campaigns (
     started_at       TIMESTAMP WITH TIME ZONE,
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid           VARCHAR NOT NULL DEFAULT 'auth123',
+    authid           VARCHAR NOT NULL DEFAULT 'test-auth',
     music_id         TEXT,
 	vendor           TEXT,
 	loop             INT,
@@ -145,7 +145,7 @@ CREATE TABLE campaign_lists (
     -- and a copy of the original list name is maintained here.
     list_id      INTEGER NULL REFERENCES lists(id) ON DELETE SET NULL ON UPDATE CASCADE,
     list_name    TEXT NOT NULL DEFAULT '',
-    authid       VARCHAR NOT NULL DEFAULT 'auth123'
+    authid       VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 CREATE UNIQUE INDEX ON campaign_lists (campaign_id, list_id);
 DROP INDEX IF EXISTS idx_camp_lists_camp_id; CREATE INDEX idx_camp_lists_camp_id ON campaign_lists(campaign_id);
@@ -159,7 +159,7 @@ CREATE TABLE campaign_views (
     -- Subscribers may be deleted, but the view counts should remain.
     subscriber_id    INTEGER NULL REFERENCES subscribers(id) ON DELETE SET NULL ON UPDATE CASCADE,
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid           VARCHAR NOT NULL DEFAULT 'auth123'
+    authid           VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 DROP INDEX IF EXISTS idx_views_camp_id; CREATE INDEX idx_views_camp_id ON campaign_views(campaign_id);
 DROP INDEX IF EXISTS idx_views_subscriber_id; CREATE INDEX idx_views_subscriber_id ON campaign_views(subscriber_id);
@@ -176,7 +176,7 @@ CREATE TABLE media (
     thumb            TEXT NOT NULL,
     meta             JSONB NOT NULL DEFAULT '{}',
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid           VARCHAR NOT NULL DEFAULT 'auth123'
+    authid           VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 
 -- campaign_media
@@ -189,7 +189,7 @@ CREATE TABLE campaign_media (
     media_id     INTEGER NULL REFERENCES media(id) ON DELETE SET NULL ON UPDATE CASCADE,
 
     filename     TEXT NOT NULL DEFAULT '',
-    authid       VARCHAR NOT NULL DEFAULT 'auth123'
+    authid       VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 DROP INDEX IF EXISTS idx_camp_media_id; CREATE UNIQUE INDEX idx_camp_media_id ON campaign_media (campaign_id, media_id);
 DROP INDEX IF EXISTS idx_camp_media_camp_id; CREATE INDEX idx_camp_media_camp_id ON campaign_media(campaign_id);
@@ -202,7 +202,7 @@ CREATE TABLE links (
     uuid uuid        NOT NULL UNIQUE,
     url              TEXT NOT NULL UNIQUE,
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid           VARCHAR NOT NULL DEFAULT 'auth123'
+    authid           VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 
 DROP TABLE IF EXISTS link_clicks CASCADE;
@@ -214,7 +214,7 @@ CREATE TABLE link_clicks (
     -- Subscribers may be deleted, but the link counts should remain.
     subscriber_id    INTEGER NULL REFERENCES subscribers(id) ON DELETE SET NULL ON UPDATE CASCADE,
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid           VARCHAR NOT NULL DEFAULT 'auth123'
+    authid           VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 DROP INDEX IF EXISTS idx_clicks_camp_id; CREATE INDEX idx_clicks_camp_id ON link_clicks(campaign_id);
 DROP INDEX IF EXISTS idx_clicks_link_id; CREATE INDEX idx_clicks_link_id ON link_clicks(link_id);
@@ -227,7 +227,7 @@ CREATE TABLE settings (
     key             TEXT NOT NULL UNIQUE,
     value           JSONB NOT NULL DEFAULT '{}',
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid          VARCHAR NOT NULL DEFAULT 'auth123'
+    authid          VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 DROP INDEX IF EXISTS idx_settings_key; CREATE INDEX idx_settings_key ON settings(key);
 INSERT INTO settings (key, value) VALUES
@@ -307,7 +307,7 @@ CREATE TABLE bounces (
     source           TEXT NOT NULL DEFAULT '',
     meta             JSONB NOT NULL DEFAULT '{}',
     created_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    authid           VARCHAR NOT NULL DEFAULT 'auth123'
+    authid           VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 DROP INDEX IF EXISTS idx_bounces_sub_id; CREATE INDEX idx_bounces_sub_id ON bounces(subscriber_id);
 DROP INDEX IF EXISTS idx_bounces_camp_id; CREATE INDEX idx_bounces_camp_id ON bounces(campaign_id);

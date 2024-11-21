@@ -43,26 +43,26 @@ func (c *Core) GetSubscriber(id int, uuid, email string, authID string) (models.
 	return out[0], nil
 }
 
-func (c *Core) GetSubscribersByAuthID(authid string) ([]models.Subscriber, error) {
+func (c *Core) GetSubscribersByAuthID(authID string) ([]models.Subscriber, error) {
 	// Create a slice to hold the subscribers
 	var out []models.Subscriber
 
 	// Query the database to get subscribers associated with the given authid
-	if err := c.q.GetSubscribersByAuthID.Select(&out, authid); err != nil {
-		c.log.Printf("error fetching subscribers for authid %s: %v", authid, err)
+	if err := c.q.GetSubscribersByAuthID.Select(&out, authID); err != nil {
+		c.log.Printf("error fetching subscribers for authid %s: %v", authID, err)
 		return nil, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching",
 				"name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
 	}
 
 	// Log the number of subscribers found
-	c.log.Printf("Number of subscribers found for authid %s: %d", authid, len(out))
+	c.log.Printf("Number of subscribers found for authid %s: %d", authID, len(out))
 
 	// Check if any subscribers were found
 	if len(out) == 0 {
 		return nil, echo.NewHTTPError(http.StatusNotFound,
 			c.i18n.Ts("globals.messages.notFound", "name",
-				fmt.Sprintf("{globals.terms.subscriber} for authid %s", authid)))
+				fmt.Sprintf("{globals.terms.subscriber} for authid %s", authID)))
 	}
 
 	return out, nil
@@ -191,6 +191,10 @@ func (c *Core) GetSubscriberProfileForExport(id int, uuid string, authID string)
 
 		return models.SubscriberExportProfile{}, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", err.Error()))
+	}
+	if out.Email == "" {
+		return models.SubscriberExportProfile{}, echo.NewHTTPError(http.StatusNotFound,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscribers}"))
 	}
 
 	return out, nil
