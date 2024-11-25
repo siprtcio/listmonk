@@ -91,16 +91,16 @@ func handleGetSubscriber(c echo.Context) error {
 func handleGetSubscribersByAuthID(c echo.Context) error {
 	var (
 		app    = c.Get("app").(*App)
-		authid = c.Param("authid")
+		authID = c.Param("authid")
 	)
 
 	// Validate that the authid is not empty
-	if authid == "" {
+	if authID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidAuthID"))
 	}
 
 	// Attempt to retrieve subscribers by AuthID
-	out, err := app.core.GetSubscribersByAuthID(authid)
+	out, err := app.core.GetSubscribersByAuthID(authID)
 	if err != nil {
 		return err
 	}
@@ -415,7 +415,7 @@ func handleManageSubscriberLists(c echo.Context) error {
 	var err error
 	switch req.Action {
 	case "add":
-		err = app.core.AddSubscriptions(subIDs, req.TargetListIDs, req.Status)
+		err = app.core.AddSubscriptions(subIDs, req.TargetListIDs, req.Status, authID)
 	case "remove":
 		err = app.core.DeleteSubscriptions(subIDs, req.TargetListIDs, authID)
 	case "unsubscribe":

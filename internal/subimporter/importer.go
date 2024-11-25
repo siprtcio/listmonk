@@ -655,6 +655,15 @@ func (im *Importer) ValidateFields(s SubReq) (SubReq, error) {
 		s.Name = strings.Join(parts, " ")
 	}
 
+	if len(s.Attribs) > 0 {
+		if number, ok := s.Attribs["number"].(string); ok {
+			phoneRegex := `^\+?\d{7,15}$`
+			re := regexp.MustCompile(phoneRegex)
+			if !re.MatchString(number) {
+				return s, errors.New("invalid number")
+			}
+		}
+	}
 	return s, nil
 }
 

@@ -36,7 +36,7 @@ type Queries struct {
 	DeleteOrphanSubscribers         *sqlx.Stmt `query:"delete-orphan-subscribers"`
 	UnsubscribeByCampaign           *sqlx.Stmt `query:"unsubscribe-by-campaign"`
 	ExportSubscriberData            *sqlx.Stmt `query:"export-subscriber-data"`
-
+	CheckSubscribersByAuthID        *sqlx.Stmt `query:"check-subscriber-authid"`
 	// Non-prepared arbitrary subscriber queries.
 	QuerySubscribers                       string     `query:"query-subscribers"`
 	QuerySubscribersCount                  string     `query:"query-subscribers-count"`
@@ -49,23 +49,28 @@ type Queries struct {
 	DeleteSubscriptionsByQuery             string     `query:"delete-subscriptions-by-query"`
 	UnsubscribeSubscribersFromListsByQuery string     `query:"unsubscribe-subscribers-from-lists-by-query"`
 
-	CreateList       *sqlx.Stmt `query:"create-list"`
-	QueryLists       string     `query:"query-lists"`
-	GetLists         *sqlx.Stmt `query:"get-lists"`
-	GetListsByAuthID *sqlx.Stmt `query:"get-lists-authid"`
-	GetListsByOptin  *sqlx.Stmt `query:"get-lists-by-optin"`
-	UpdateList       *sqlx.Stmt `query:"update-list"`
-	UpdateListsDate  *sqlx.Stmt `query:"update-lists-date"`
-	DeleteLists      *sqlx.Stmt `query:"delete-lists"`
+	CheckDuplicateList       *sqlx.Stmt `query:"check-duplicate-list"`
+	CheckDuplicateListUpdate *sqlx.Stmt `query:"check-duplicate-list-update"`
+	CreateList               *sqlx.Stmt `query:"create-list"`
+	QueryLists               string     `query:"query-lists"`
+	GetLists                 *sqlx.Stmt `query:"get-lists"`
+	GetListsByAuthID         *sqlx.Stmt `query:"get-lists-authid"`
+	CheckListsByAuthID       *sqlx.Stmt `query:"check-lists-authid"`
+	GetListsByOptin          *sqlx.Stmt `query:"get-lists-by-optin"`
+	UpdateList               *sqlx.Stmt `query:"update-list"`
+	UpdateListsDate          *sqlx.Stmt `query:"update-lists-date"`
+	DeleteLists              *sqlx.Stmt `query:"delete-lists"`
 
-	CreateCampaign        *sqlx.Stmt `query:"create-campaign"`
-	QueryCampaigns        string     `query:"query-campaigns"`
-	GetCampaign           *sqlx.Stmt `query:"get-campaign"`
-	GetCampaignByAuthId   *sqlx.Stmt `query:"get-campaign-authid"`
-	GetCampaignForPreview *sqlx.Stmt `query:"get-campaign-for-preview"`
-	GetCampaignStats      *sqlx.Stmt `query:"get-campaign-stats"`
-	GetCampaignStatus     *sqlx.Stmt `query:"get-campaign-status"`
-	GetArchivedCampaigns  *sqlx.Stmt `query:"get-archived-campaigns"`
+	CreateCampaign               *sqlx.Stmt `query:"create-campaign"`
+	CheckInsertCampaignValidData *sqlx.Stmt `query:"check-insert-campaign-valid-data"`
+	CheckUpdateCampaignValidData *sqlx.Stmt `query:"check-update-campaign-valid-data"`
+	QueryCampaigns               string     `query:"query-campaigns"`
+	GetCampaign                  *sqlx.Stmt `query:"get-campaign"`
+	GetCampaignByAuthId          *sqlx.Stmt `query:"get-campaign-authid"`
+	GetCampaignForPreview        *sqlx.Stmt `query:"get-campaign-for-preview"`
+	GetCampaignStats             *sqlx.Stmt `query:"get-campaign-stats"`
+	GetCampaignStatus            *sqlx.Stmt `query:"get-campaign-status"`
+	GetArchivedCampaigns         *sqlx.Stmt `query:"get-archived-campaigns"`
 
 	// These two queries are read as strings and based on settings.individual_tracking=on/off,
 	// are interpolated and copied to view and click counts. Same query, different tables.
@@ -92,11 +97,12 @@ type Queries struct {
 	QueryMedia  *sqlx.Stmt `query:"query-media"`
 	DeleteMedia *sqlx.Stmt `query:"delete-media"`
 
-	CreateTemplate     *sqlx.Stmt `query:"create-template"`
-	GetTemplates       *sqlx.Stmt `query:"get-templates"`
-	UpdateTemplate     *sqlx.Stmt `query:"update-template"`
-	SetDefaultTemplate *sqlx.Stmt `query:"set-default-template"`
-	DeleteTemplate     *sqlx.Stmt `query:"delete-template"`
+	CreateTemplate      *sqlx.Stmt `query:"create-template"`
+	GetTemplates        *sqlx.Stmt `query:"get-templates"`
+	UpdateTemplate      *sqlx.Stmt `query:"update-template"`
+	SetDefaultTemplate  *sqlx.Stmt `query:"set-default-template"`
+	GetTemplateByAuthID *sqlx.Stmt `query:"get-template-by-authid"`
+	DeleteTemplate      *sqlx.Stmt `query:"delete-template"`
 
 	CreateLink        *sqlx.Stmt `query:"create-link"`
 	RegisterLinkClick *sqlx.Stmt `query:"register-link-click"`

@@ -6,6 +6,7 @@ import (
 
 	"github.com/knadh/listmonk/models"
 	"github.com/labstack/echo/v4"
+	"github.com/lib/pq"
 )
 
 // GetTemplates retrieves all templates.
@@ -39,19 +40,31 @@ func (c *Core) GetTemplate(id int, noBody bool, authID string) (models.Template,
 func (c *Core) CreateTemplate(name, typ, subject string, body []byte, authID string) (models.Template, error) {
 	var newID int
 	if err := c.q.CreateTemplate.Get(&newID, name, typ, subject, body, authID); err != nil {
-		return models.Template{}, echo.NewHTTPError(http.StatusInternalServerError,
-			c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.template}", "error", pqErrMsg(err)))
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "templates_name_authid_idx" {
+			return models.Template{}, echo.NewHTTPError(http.StatusConflict,
+				c.i18n.Ts("globals.messages.invalidFields", "name", "Name"))
+		} else {
+			c.log.Printf("error inserting template: %v", err)
+			return models.Template{}, echo.NewHTTPError(http.StatusInternalServerError,
+				c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.template}", "error", pqErrMsg(err)))
+		}
 	}
 
-	return c.GetTemplate(newID, false, "")
+	return c.GetTemplate(newID, false, authID)
 }
 
 // UpdateTemplate updates a given template.
 func (c *Core) UpdateTemplate(id int, name, subject string, body []byte, authID string) (models.Template, error) {
 	res, err := c.q.UpdateTemplate.Exec(id, name, subject, body, authID)
 	if err != nil {
-		return models.Template{}, echo.NewHTTPError(http.StatusInternalServerError,
-			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.template}", "error", pqErrMsg(err)))
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "templates_name_authid_idx" {
+			return models.Template{}, echo.NewHTTPError(http.StatusConflict,
+				c.i18n.Ts("globals.messages.invalidFields", "name", "Name"))
+		} else {
+			c.log.Printf("error inserting template: %v", err)
+			return models.Template{}, echo.NewHTTPError(http.StatusInternalServerError,
+				c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.template}", "error", pqErrMsg(err)))
+		}
 	}
 
 	if n, _ := res.RowsAffected(); n == 0 {
@@ -64,6 +77,17 @@ func (c *Core) UpdateTemplate(id int, name, subject string, body []byte, authID 
 
 // SetDefaultTemplate sets a template as default.
 func (c *Core) SetDefaultTemplate(id int, authID string) error {
+	var count int
+	if err := c.q.GetTemplateByAuthID.Get(&count, id, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.templates}", "error", pqErrMsg(err)))
+	}
+
+	if count == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.template}"))
+	}
+
 	if _, err := c.q.SetDefaultTemplate.Exec(id, authID); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.template}", "error", pqErrMsg(err)))

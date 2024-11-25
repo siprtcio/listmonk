@@ -778,7 +778,7 @@ func processSubForm(c echo.Context) (bool, error) {
 			FormListUUIDs []string `form:"l" json:"list_uuids"`
 		}
 	)
-	authID := c.Param("authid")
+	authID := c.Request().Header.Get("X-Auth-ID")
 	if authID == "" {
 		return false, echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}

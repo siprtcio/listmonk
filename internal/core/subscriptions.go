@@ -23,11 +23,29 @@ func (c *Core) GetSubscriptions(subID int, subUUID string, allLists bool, authID
 }
 
 // AddSubscriptions adds list subscriptions to subscribers.
-func (c *Core) AddSubscriptions(subIDs, listIDs []int, status string) error {
-	if _, err := c.q.AddSubscribersToLists.Exec(pq.Array(subIDs), pq.Array(listIDs), status); err != nil {
+func (c *Core) AddSubscriptions(subIDs, listIDs []int, status string, authID string) error {
+	var listCount, subscriberCount int
+	if err := c.q.CheckListsByAuthID.Get(&listCount, authID, pq.Array(listIDs)); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.lists}", "error", pqErrMsg(err)))
+	}
+	if listCount != len(listIDs) {
+		return echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.list}"))
+	}
+
+	if err := c.q.CheckSubscribersByAuthID.Get(&subscriberCount, authID, pq.Array(subIDs)); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
+	}
+
+	if subscriberCount != len(subIDs) {
+		return echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscribers}"))
+	}
+
+	if _, err := c.q.AddSubscribersToLists.Exec(pq.Array(subIDs), pq.Array(listIDs), status, authID); err != nil {
 		c.log.Printf("error adding subscriptions: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
-			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscribers}", "error", err.Error()))
+			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriptions}", "error", err.Error()))
 	}
 
 	return nil
@@ -52,11 +70,34 @@ func (c *Core) AddSubscriptionsByQuery(query string, sourceListIDs, targetListID
 
 // DeleteSubscriptions delete list subscriptions from subscribers.
 func (c *Core) DeleteSubscriptions(subIDs, listIDs []int, authID string) error {
-	if _, err := c.q.DeleteSubscriptions.Exec(pq.Array(subIDs), pq.Array(listIDs), authID); err != nil {
+	var listCount, subscriberCount int
+	if err := c.q.CheckListsByAuthID.Get(&listCount, authID, pq.Array(listIDs)); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.lists}", "error", pqErrMsg(err)))
+	}
+	if listCount != len(listIDs) {
+		return echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.list}"))
+	}
+
+	if err := c.q.CheckSubscribersByAuthID.Get(&subscriberCount, authID, pq.Array(subIDs)); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
+	}
+
+	if subscriberCount != len(subIDs) {
+		return echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscribers}"))
+	}
+
+	res, err := c.q.DeleteSubscriptions.Exec(pq.Array(subIDs), pq.Array(listIDs), authID)
+	if err != nil {
 		c.log.Printf("error deleting subscriptions: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
-			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscribers}", "error", err.Error()))
+			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriptions}", "error", err.Error()))
+	}
 
+	if n, _ := res.RowsAffected(); n == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscriptions}"))
 	}
 
 	return nil
@@ -81,10 +122,34 @@ func (c *Core) DeleteSubscriptionsByQuery(query string, sourceListIDs, targetLis
 
 // UnsubscribeLists sets list subscriptions to 'unsubscribed'.
 func (c *Core) UnsubscribeLists(subIDs, listIDs []int, listUUIDs []string, authID string) error {
-	if _, err := c.q.UnsubscribeSubscribersFromLists.Exec(pq.Array(subIDs), pq.Array(listIDs), pq.StringArray(listUUIDs), authID); err != nil {
+	var listCount, subscriberCount int
+	if err := c.q.CheckListsByAuthID.Get(&listCount, authID, pq.Array(listIDs)); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.lists}", "error", pqErrMsg(err)))
+	}
+	if listCount != len(listIDs) {
+		return echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.list}"))
+	}
+
+	if err := c.q.CheckSubscribersByAuthID.Get(&subscriberCount, authID, pq.Array(subIDs)); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
+	}
+
+	if subscriberCount != len(subIDs) {
+		return echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscribers}"))
+	}
+
+	res, err := c.q.UnsubscribeSubscribersFromLists.Exec(pq.Array(subIDs), pq.Array(listIDs), pq.StringArray(listUUIDs), authID)
+	if err != nil {
 		c.log.Printf("error unsubscribing from lists: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
-			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscribers}", "error", err.Error()))
+			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriptions}", "error", err.Error()))
+	}
+
+	if n, _ := res.RowsAffected(); n == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscriptions}"))
 	}
 
 	return nil
