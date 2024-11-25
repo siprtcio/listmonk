@@ -68,7 +68,7 @@ DROP INDEX IF EXISTS idx_sub_lists_status; CREATE INDEX idx_sub_lists_status ON 
 
 -- templates
 DROP TABLE IF EXISTS templates CASCADE;
-CREATE TABLE template (
+CREATE TABLE templates (
     id              SERIAL PRIMARY KEY,
     name            TEXT NOT NULL,
     type            template_type NOT NULL DEFAULT 'campaign',
@@ -81,6 +81,7 @@ CREATE TABLE template (
     authid          VARCHAR NOT NULL DEFAULT 'test-auth'
 );
 CREATE UNIQUE INDEX ON templates (is_default, authid) WHERE is_default = true;
+CREATE UNIQUE INDEX ON templates (name, authid);
 
 
 -- campaigns
@@ -115,7 +116,7 @@ CREATE TABLE campaigns (
 
     -- Publishing.
     archive             BOOLEAN NOT NULL DEFAULT false,
-    archive_slug        TEXT NULL UNIQUE,
+    archive_slug        TEXT NULL,
     archive_template_id INTEGER REFERENCES templates(id) ON DELETE SET DEFAULT DEFAULT 1,
     archive_meta        JSONB NOT NULL DEFAULT '{}',
 
@@ -134,6 +135,7 @@ DROP INDEX IF EXISTS idx_camps_status; CREATE INDEX idx_camps_status ON campaign
 DROP INDEX IF EXISTS idx_camps_name; CREATE INDEX idx_camps_name ON campaigns(name);
 DROP INDEX IF EXISTS idx_camps_created_at; CREATE INDEX idx_camps_created_at ON campaigns(created_at);
 DROP INDEX IF EXISTS idx_camps_updated_at; CREATE INDEX idx_camps_updated_at ON campaigns(updated_at);
+DROP INDEX IF EXISTS idx_camps_archive_slug; CREATE UNIQUE INDEX idx_camps_archive_slug ON campaigns(archive_slug, authid);
 
 
 DROP TABLE IF EXISTS campaign_lists CASCADE;

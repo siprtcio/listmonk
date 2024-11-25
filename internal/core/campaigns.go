@@ -503,13 +503,23 @@ func (c *Core) UpdateCampaignStatus(id int, status string, authID string) (model
 
 // UpdateCampaignArchive updates a campaign's archive properties.
 func (c *Core) UpdateCampaignArchive(id int, enabled bool, tplID int, meta models.JSON, archiveSlug string, authID string) error {
-	if _, err := c.q.UpdateCampaignArchive.Exec(id, enabled, archiveSlug, tplID, meta, authID); err != nil {
-		c.log.Printf("error updating campaign: %v", err)
+	res, err := c.q.UpdateCampaignArchive.Exec(id, enabled, archiveSlug, tplID, meta, authID)
+	if err != nil {
+		if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "idx_camps_archive_slug" {
+			return echo.NewHTTPError(http.StatusConflict,
+				c.i18n.Ts("globals.messages.invalidFields", "name", "archive_slug"))
+		} else {
+			c.log.Printf("error updating campaign: %v", err)
+			
+			return echo.NewHTTPError(http.StatusInternalServerError,
+				c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.campaign}", "error", pqErrMsg(err)))
+		}
 
-		return echo.NewHTTPError(http.StatusInternalServerError,
-			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.campaign}", "error", pqErrMsg(err)))
 	}
-
+	if n, _ := res.RowsAffected(); n == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.campaign}"))
+	}
 	return nil
 }
 

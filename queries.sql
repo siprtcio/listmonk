@@ -542,7 +542,7 @@ DELETE FROM lists WHERE id = ALL($1) AND authid = $2;
 -- name: check-insert-campaign-valid-data
 SELECT JSON_BUILD_OBJECT(
 				'duplicateCount', (SELECT COUNT(*) FROM campaigns WHERE name = $1 AND authid = $2),
-				'templateCount', (SELECT COUNT(*) FROM templates WHERE id = $3 AND authid = $2),
+				'templateCount', (SELECT COUNT(*) FROM templates WHERE id = $3 AND authid = $2 AND is_default IS TRUE),
                 'defaultTemplate', (SELECT id FROM templates WHERE authid = $2 AND is_default IS TRUE),
 				'mediaCount', (SELECT COUNT(*) FROM media WHERE id = ANY($4::INT[]) AND authid = $2),
                 'listCount', (SELECT COUNT(*) FROM lists WHERE id = ANY($5::INT[]) AND authid = $2)
@@ -1020,6 +1020,9 @@ UPDATE templates SET
     body=(CASE WHEN $4 != '' THEN $4 ELSE body END),
     updated_at=NOW()
 WHERE id = $1 AND authid = $5;
+
+-- name: get-template-by-authid
+SELECT COUNT(*) FROM templates WHERE id = $1 AND authid = $2
 
 -- name: set-default-template
 WITH u AS (

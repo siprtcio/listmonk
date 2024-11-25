@@ -97,11 +97,12 @@ type Queries struct {
 	QueryMedia  *sqlx.Stmt `query:"query-media"`
 	DeleteMedia *sqlx.Stmt `query:"delete-media"`
 
-	CreateTemplate     *sqlx.Stmt `query:"create-template"`
-	GetTemplates       *sqlx.Stmt `query:"get-templates"`
-	UpdateTemplate     *sqlx.Stmt `query:"update-template"`
-	SetDefaultTemplate *sqlx.Stmt `query:"set-default-template"`
-	DeleteTemplate     *sqlx.Stmt `query:"delete-template"`
+	CreateTemplate      *sqlx.Stmt `query:"create-template"`
+	GetTemplates        *sqlx.Stmt `query:"get-templates"`
+	UpdateTemplate      *sqlx.Stmt `query:"update-template"`
+	SetDefaultTemplate  *sqlx.Stmt `query:"set-default-template"`
+	GetTemplateByAuthID *sqlx.Stmt `query:"get-template-by-authid"`
+	DeleteTemplate      *sqlx.Stmt `query:"delete-template"`
 
 	CreateLink        *sqlx.Stmt `query:"create-link"`
 	RegisterLinkClick *sqlx.Stmt `query:"register-link-click"`
