@@ -486,13 +486,14 @@ WITH ls AS (
     CASE
         WHEN $1 > 0 THEN id = $1
         WHEN $2 != '' THEN uuid = $2::UUID
-        WHEN $3 != '' THEN to_tsvector(name) @@ to_tsquery ($3)
+        WHEN $3 != '' THEN name ILIKE $3
         ELSE TRUE
     END
     AND ($4 = '' OR type = $4::list_type)
     AND ($5 = '' OR optin = $5::list_optin)
     AND (CARDINALITY($6::VARCHAR(100)[]) = 0 OR $6 <@ tags)
     AND (authid=$9)
+    ORDER BY %order%
     OFFSET $7 LIMIT (CASE WHEN $8 < 1 THEN NULL ELSE $8 END)
 ),
 statuses AS (

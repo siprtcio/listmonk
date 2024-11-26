@@ -27,7 +27,7 @@ const (
 // query expression. It also returns the total number of records in the DB.
 func (c *Core) QueryCampaigns(searchStr string, statuses, tags []string, orderBy, order string, offset, limit int, authID string) (models.Campaigns, int, error) {
 
-	queryStr, stmt := makeSearchQuery(searchStr, orderBy, order, c.q.QueryCampaigns, campQuerySortFields, authID)
+	queryStr, stmt := makeSearchQuery(searchStr, orderBy, order, c.q.QueryCampaigns, campQuerySortFields)
 
 	if statuses == nil {
 		statuses = []string{}
