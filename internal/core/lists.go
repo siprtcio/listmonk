@@ -86,7 +86,7 @@ func (c *Core) QueryLists(searchStr, typ, optin string, tags []string, orderBy, 
 
 	var (
 		out            = []models.List{}
-		queryStr, stmt = makeSearchQuery(searchStr, orderBy, order, c.q.QueryLists, listQuerySortFields)
+		queryStr, stmt = makeSearchQuery(searchStr, orderBy, order, c.q.QueryLists, listQuerySortFields, authID)
 	)
 	if err := c.db.Select(&out, stmt, 0, "", queryStr, typ, optin, pq.StringArray(tags), offset, limit, authID); err != nil {
 		c.log.Printf("error fetching lists: %v", err)
@@ -122,7 +122,7 @@ func (c *Core) GetList(id int, uuid string, authID string) (models.List, error) 
 	}
 
 	var res []models.List
-	queryStr, stmt := makeSearchQuery("", "", "", c.q.QueryLists, nil)
+	queryStr, stmt := makeSearchQuery("", "", "", c.q.QueryLists, nil, authID)
 	if err := c.db.Select(&res, stmt, id, uu, queryStr, "", "", pq.StringArray{}, 0, 1, authID); err != nil {
 		c.log.Printf("error fetching lists: %v", err)
 		return models.List{}, echo.NewHTTPError(http.StatusInternalServerError,
