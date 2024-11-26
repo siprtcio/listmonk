@@ -511,6 +511,7 @@ func (c *Core) UpdateCampaignArchive(id int, enabled bool, tplID int, meta model
 		} else {
 			c.log.Printf("error updating campaign: %v", err)
 
+			
 			return echo.NewHTTPError(http.StatusInternalServerError,
 				c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.campaign}", "error", pqErrMsg(err)))
 		}
