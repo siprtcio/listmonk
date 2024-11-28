@@ -338,11 +338,12 @@ SELECT subscribers.* FROM subscribers
     WHERE (CARDINALITY($1) = 0 OR subscriber_lists.list_id = ANY($1::INT[]))
     AND subscribers.authid = $5
     %query%
+    GROUP BY subscribers.id
     ORDER BY %order% OFFSET $3 LIMIT (CASE WHEN $4 < 1 THEN NULL ELSE $4 END);
 
 -- name: query-subscribers-count
 -- Replica of query-subscribers for obtaining the results count.
-SELECT COUNT(*) AS total FROM subscribers
+SELECT COUNT(DISTINCT subscribers.id) AS total FROM subscribers
     LEFT JOIN subscriber_lists
     ON (
         -- Optional list filtering.
