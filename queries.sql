@@ -338,11 +338,12 @@ SELECT subscribers.* FROM subscribers
     WHERE (CARDINALITY($1) = 0 OR subscriber_lists.list_id = ANY($1::INT[]))
     AND subscribers.authid = $5
     %query%
+    GROUP BY subscribers.id
     ORDER BY %order% OFFSET $3 LIMIT (CASE WHEN $4 < 1 THEN NULL ELSE $4 END);
 
 -- name: query-subscribers-count
 -- Replica of query-subscribers for obtaining the results count.
-SELECT COUNT(*) AS total FROM subscribers
+SELECT COUNT(DISTINCT subscribers.id) AS total FROM subscribers
     LEFT JOIN subscriber_lists
     ON (
         -- Optional list filtering.
@@ -486,13 +487,14 @@ WITH ls AS (
     CASE
         WHEN $1 > 0 THEN id = $1
         WHEN $2 != '' THEN uuid = $2::UUID
-        WHEN $3 != '' THEN to_tsvector(name) @@ to_tsquery ($3)
+        WHEN $3 != '' THEN name ILIKE $3
         ELSE TRUE
     END
     AND ($4 = '' OR type = $4::list_type)
     AND ($5 = '' OR optin = $5::list_optin)
     AND (CARDINALITY($6::VARCHAR(100)[]) = 0 OR $6 <@ tags)
     AND (authid=$9)
+    ORDER BY %order%
     OFFSET $7 LIMIT (CASE WHEN $8 < 1 THEN NULL ELSE $8 END)
 ),
 statuses AS (
@@ -587,11 +589,11 @@ camp AS (
 ),
 med AS (
     INSERT INTO campaign_media (campaign_id, media_id, filename, authid)
-        (SELECT (SELECT id FROM camp), id, filename, (SELECT authid FROM camp) FROM media WHERE id=ANY($19::INT[]))
+        (SELECT (SELECT id FROM camp), id, filename, (SELECT authid FROM camp) FROM media WHERE id=ANY($19::INT[]) AND authid = $20)
 ),
 insLists AS (
     INSERT INTO campaign_lists (campaign_id, list_id, list_name, authid)
-        SELECT (SELECT id FROM camp), id, name, (SELECT authid FROM camp) FROM lists WHERE id=ANY($14::INT[])
+        SELECT (SELECT id FROM camp), id, name, (SELECT authid FROM camp) FROM lists WHERE id=ANY($14::INT[]) AND authid = $20
 )
 SELECT id FROM camp;
 
@@ -939,11 +941,11 @@ med AS (
 ),
 medi AS (
     INSERT INTO campaign_media (campaign_id, media_id, filename)
-        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($19::INT[]))
+        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($19::INT[]) AND authid = $20)
         ON CONFLICT (campaign_id, media_id) DO NOTHING
 )
 INSERT INTO campaign_lists (campaign_id, list_id, list_name)
-    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($14::INT[]))
+    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($14::INT[]) AND authid = $20)
     ON CONFLICT (campaign_id, list_id) DO UPDATE SET list_name = EXCLUDED.list_name;
 
 -- name: update-campaign-counts
