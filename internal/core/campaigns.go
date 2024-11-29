@@ -324,10 +324,10 @@ func (c *Core) CreateCampaign(o models.Campaign, listIDs []int, mediaIDs []int, 
 	if o.TemplateID != 0 && validationData["templateCount"].(float64) < 1 {
 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.template}"))
 	}
-	if len(mediaIDs) > 0 && validationData["mediaCount"].(float64) < 1 {
+	if len(mediaIDs) > 0 && int(validationData["mediaCount"].(float64)) < len(mediaIDs) {
 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.media}"))
 	}
-	if validationData["listCount"].(float64) < 1 {
+	if int(validationData["listCount"].(float64)) < len(listIDs) {
 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.list}"))
 	}
 	if validationData["defaultTemplate"] == nil {
@@ -404,10 +404,10 @@ func (c *Core) UpdateCampaign(id int, o models.Campaign, listIDs []int, mediaIDs
 	if validationData["templateCount"].(float64) < 1 {
 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.template}"))
 	}
-	if len(mediaIDs) > 0 && validationData["mediaCount"].(float64) < 1 {
+	if len(mediaIDs) > 0 && int(validationData["mediaCount"].(float64)) < len(mediaIDs) {
 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.media}"))
 	}
-	if validationData["listCount"].(float64) < 1 {
+	if len(listIDs) > 0 && int(validationData["listCount"].(float64)) < len(listIDs) {
 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.list}"))
 	}
 

@@ -589,11 +589,11 @@ camp AS (
 ),
 med AS (
     INSERT INTO campaign_media (campaign_id, media_id, filename, authid)
-        (SELECT (SELECT id FROM camp), id, filename, (SELECT authid FROM camp) FROM media WHERE id=ANY($19::INT[]))
+        (SELECT (SELECT id FROM camp), id, filename, (SELECT authid FROM camp) FROM media WHERE id=ANY($19::INT[]) AND authid = $20)
 ),
 insLists AS (
     INSERT INTO campaign_lists (campaign_id, list_id, list_name, authid)
-        SELECT (SELECT id FROM camp), id, name, (SELECT authid FROM camp) FROM lists WHERE id=ANY($14::INT[])
+        SELECT (SELECT id FROM camp), id, name, (SELECT authid FROM camp) FROM lists WHERE id=ANY($14::INT[]) AND authid = $20
 )
 SELECT id FROM camp;
 
@@ -941,11 +941,11 @@ med AS (
 ),
 medi AS (
     INSERT INTO campaign_media (campaign_id, media_id, filename)
-        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($19::INT[]))
+        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($19::INT[]) AND authid = $20)
         ON CONFLICT (campaign_id, media_id) DO NOTHING
 )
 INSERT INTO campaign_lists (campaign_id, list_id, list_name)
-    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($14::INT[]))
+    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($14::INT[]) AND authid = $20)
     ON CONFLICT (campaign_id, list_id) DO UPDATE SET list_name = EXCLUDED.list_name;
 
 -- name: update-campaign-counts
