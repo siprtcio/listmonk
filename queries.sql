@@ -971,6 +971,47 @@ UPDATE campaigns SET
 -- name: delete-campaign
 DELETE FROM campaigns WHERE id=$1 AND authid = $2;
 
+-- name: get-campaign-report
+SELECT
+    campaigns.*,
+    COALESCE(templates.body,
+        (SELECT body FROM templates WHERE is_default = true LIMIT 1)
+    ) AS template_body,
+    COALESCE(( 
+        SELECT COUNT(*) FROM campaign_views
+        WHERE campaign_views.campaign_id = campaigns.id AND campaign_views.authid = campaigns.authid
+    ), 0) AS views,
+    COALESCE(( 
+        SELECT COUNT(campaign_id) FROM link_clicks
+        WHERE link_clicks.campaign_id = campaigns.id AND link_clicks.authid = campaigns.authid
+    ), 0) AS clicks,
+    COALESCE(( 
+        SELECT COUNT(campaign_id) FROM bounces
+        WHERE bounces.campaign_id = campaigns.id AND bounces.authid = campaigns.authid
+    ), 0) AS bounces,
+    (SELECT json_agg(
+        json_build_object(
+            'list', lists.*,
+            'subscriber_count', 
+            (SELECT COUNT(*) 
+             FROM subscriber_lists
+             WHERE subscriber_lists.list_id = lists.id)
+        )
+    )
+     FROM lists 
+     JOIN campaign_lists ON campaign_lists.list_id = lists.id 
+     WHERE campaign_lists.campaign_id = campaigns.id AND campaign_lists.authid = campaigns.authid
+    ) AS lists,
+    (SELECT json_agg(media) FROM media
+        JOIN campaign_media ON campaign_media.media_id = media.id 
+        WHERE campaign_media.campaign_id = campaigns.id AND campaign_media.authid = campaigns.authid
+    ) AS media
+FROM campaigns
+LEFT JOIN templates ON templates.id = campaigns.template_id
+WHERE ($1::int[] IS NULL OR array_length($1::int[], 1) = 0 OR campaigns.id = ANY($1::int[]))
+AND campaigns.authid = $2 AND campaigns.status = $3 ORDER BY %order%;
+
+
 -- name: register-campaign-view
 WITH view AS (
     SELECT campaigns.id as campaign_id, campaigns.authid as campaign_authid, subscribers.id AS subscriber_id FROM campaigns

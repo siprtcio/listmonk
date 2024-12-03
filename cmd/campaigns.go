@@ -787,3 +787,31 @@ func makeOptinCampaignMessage(o campaignReq, app *App) (campaignReq, error) {
 	o.Body = b.String()
 	return o, nil
 }
+
+// GetCampaignReport retrieves the campaign reports.
+// If IDs are provided then, those specific campaign reports are returned, otherwise all campaign reports are returned.
+func handleGetCampaignsReport(c echo.Context) error {
+	var (
+		app     = c.Get("app").(*App)
+		orderBy = c.FormValue("order_by")
+		order   = c.FormValue("order")
+		status  = c.FormValue("status")
+	)
+
+	campaignIDs, err := getQueryInts("campaign_id", c.QueryParams())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
+	}
+
+	authID := c.Request().Header.Get("X-Auth-ID")
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	campaigns, err := app.core.GetCampaignReport(campaignIDs, authID, order, orderBy, status)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, okResp{campaigns})
+}

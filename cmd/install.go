@@ -210,7 +210,7 @@ func installSchema(curVer string, db *sqlx.DB, fs stuffbin.FileSystem) error {
 func recordMigrationVersion(ver string, db *sqlx.DB) error {
 	_, err := db.Exec(fmt.Sprintf(`INSERT INTO settings (key, value)
 	VALUES('migrations', '["%s"]'::JSONB)
-	ON CONFLICT (key) DO UPDATE SET value = settings.value || EXCLUDED.value`, ver))
+	ON CONFLICT (key,authid) DO UPDATE SET value = settings.value || EXCLUDED.value`, ver))
 	return err
 }
 

@@ -275,12 +275,26 @@ type Campaign struct {
 	// in searches and queries.
 	Total     int    `db:"total" json:"-"`
 	AuthID    string `db:"authid" json:"auth_id"`
-	MusicID   string `json:"music_id"` // New field
-	Vendor    string `json:"vendor"`   // New field
-	Loop      int    `json:"loop"`     // New field
-	Voice     string `json:"voice"`    // New field
-	Language  string `json:"language"` // New field
+	MusicID   string `db:"music_id" json:"music_id"`
+	Vendor    string `db:"vendor" json:"vendor"`
+	Loop      int    `db:"loop" json:"loop"`
+	Voice     string `db:"voice" json:"voice"`
+	Language  string `db:"language" json:"language"`
 	FromPhone string `json:"from_phone"`
+}
+
+type CampaignReport struct {
+	Campaign
+
+	Views   int `db:"views" json:"views"`
+	Clicks  int `db:"clicks" json:"clicks"`
+	Bounces int `db:"bounces" json:"bounces"`
+
+	MaxSubscriberID  int `db:"max_subscriber_id" json:"max_subscriber_id"`
+	LastSubscriberID int `db:"last_subscriber_id" json:"last_subscriber_id"`
+
+	Lists *json.RawMessage `db:"lists" json:"lists"`
+	Media *json.RawMessage `db:"media" json:"media"`
 }
 
 // CampaignMeta contains fields tracking a campaign's progress.
