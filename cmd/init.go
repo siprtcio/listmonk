@@ -350,11 +350,11 @@ func prepareQueries(qMap goyesql.Queries, db *sqlx.DB, ko *koanf.Koanf) *models.
 }
 
 // initSettings loads settings from the DB into the given Koanf map.
-func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf) {
+func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf, authID string) {
 	var s types.JSONText
 
-	log.Println("auth_id", ko.String("app.auth_id"))
-	if err := db.Get(&s, query, ko.String("app.auth_id")); err != nil {
+	log.Println("auth_id", authID)
+	if err := db.Get(&s, query, authID); err != nil {
 		msg := err.Error()
 		if err, ok := err.(*pq.Error); ok {
 			if err.Detail != "" {

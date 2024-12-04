@@ -632,7 +632,7 @@ ORDER BY %order% OFFSET $5 LIMIT (CASE WHEN $6 < 1 THEN NULL ELSE $6 END);
 -- name: get-campaign-authid
 SELECT campaigns.*
 FROM campaigns
-WHERE  campaigns.authid = $1;
+WHERE  campaigns.authid = $1 ORDER BY campaigns.created_at DESC;
 
 
 -- name: get-campaign
@@ -823,7 +823,7 @@ WITH intval AS (
 )
 SELECT campaign_id, COUNT(*) AS "count", DATE_TRUNC((SELECT * FROM intval), created_at) AS "timestamp"
     FROM bounces
-    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3
+    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3 AND authid = $4
     GROUP BY campaign_id, "timestamp" ORDER BY "timestamp" ASC;
 
 -- name: get-campaign-link-counts
@@ -1101,6 +1101,12 @@ SELECT * FROM media WHERE (CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END)  AN
 
 -- name: delete-media
 DELETE FROM media WHERE id=$1 AND authid=$2;
+
+-- name: get-extensions
+SELECT jsonb_array_elements_text(value) FROM settings WHERE key = 'upload.extensions' AND authid = $1;
+
+-- name: get-file-path
+SELECT value FROM settings WHERE key = 'upload.filesystem.upload_path' AND authid = $1;
 
 -- links
 -- name: create-link

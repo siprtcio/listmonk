@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -60,9 +61,27 @@ func handleUploadMedia(c echo.Context) error {
 			app.i18n.Ts("media.invalidFileName", "name", file.Filename))
 	}
 
+	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	initMediaStore()
+	app.manager = initCampaignManager(app.queries, app.constants, app)
+	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	for _, m := range initPostbackMessengers(app.manager) {
+		app.messengers[m.Name()] = m
+	}
+	for _, m := range app.messengers {
+		app.manager.AddMessenger(m)
+	}
+
+	extensions, err := app.core.GetExtensions(authID)
+	if err != nil {
+		cleanUp = true
+		return err
+	}
+
 	// Validate file extension.
-	if !inArray("*", app.constants.MediaUpload.Extensions) {
-		if ok := inArray(ext, app.constants.MediaUpload.Extensions); !ok {
+	if !inArray("*", extensions) {
+		ok := inArray(ext, extensions)
+		if !ok {
 			return echo.NewHTTPError(http.StatusBadRequest,
 				app.i18n.Ts("media.unsupportedFileType", "type", ext))
 		}
@@ -75,8 +94,15 @@ func handleUploadMedia(c echo.Context) error {
 	suffix, _ := generateRandomString(6)
 	fName = appendSuffixToFilename(fName, suffix)
 
+	filePath, err := app.core.GetFilePath(authID)
+	if err != nil {
+		cleanUp = true
+		return err
+	}
+	log.Println("File Path:", filePath)
+
 	// Upload the file.
-	fName, err = app.media.Put(fName, contentType, src)
+	fName, err = app.media.Put(fName, contentType, src, filePath)
 	if err != nil {
 		app.log.Printf("error uploading file: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
@@ -114,7 +140,7 @@ func handleUploadMedia(c echo.Context) error {
 		height = h
 
 		// Upload thumbnail.
-		tf, err := app.media.Put(thumbPrefix+fName, contentType, thumbFile)
+		tf, err := app.media.Put(thumbPrefix+fName, contentType, thumbFile, filePath)
 		if err != nil {
 			cleanUp = true
 			app.log.Printf("error saving thumbnail: %v", err)

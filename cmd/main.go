@@ -154,9 +154,9 @@ func init() {
 	qMap := readQueries(queryFilePath, db, fs)
 
 	// Load settings from DB.
-	if q, ok := qMap["get-settings"]; ok {
-		initSettings(q.Query, db, ko)
-	}
+	// if q, ok := qMap["get-settings"]; ok {
+	// 	initSettings(q.Query, db, ko)
+	// }
 
 	// Prepare queries.
 	queries = prepareQueries(qMap, db, ko)
@@ -169,7 +169,7 @@ func main() {
 		fs:         fs,
 		db:         db,
 		constants:  initConstants(),
-		media:      initMediaStore(),
+		// media:      initMediaStore(),
 		messengers: make(map[string]manager.Messenger),
 		log:        lo,
 		bufLog:     bufLog,
@@ -208,7 +208,7 @@ func main() {
 	})
 
 	app.queries = queries
-	app.manager = initCampaignManager(app.queries, app.constants, app)
+	// app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.importer = initImporter(app.queries, db, app.core, app)
 	app.notifTpls = initNotifTemplates("/email-templates/*.html", fs, app.i18n, app.constants)
 	initTxTemplates(app.manager, app)
@@ -219,7 +219,7 @@ func main() {
 	}
 
 	// Initialize the default SMTP (`email`) messenger.
-	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	// app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 
 	// Initialize any additional postback messengers.
 	for _, m := range initPostbackMessengers(app.manager) {
@@ -241,7 +241,7 @@ func main() {
 
 	// Start the campaign workers. The campaign batches (fetch from DB, push out
 	// messages) get processed at the specified interval.
-	go app.manager.Run()
+	// go app.manager.Run()
 
 	// Start the app server.
 	srv := initHTTPServer(app)

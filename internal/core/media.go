@@ -103,3 +103,28 @@ func (c *Core) DeleteMedia(id int, authID string) error {
 
 	return nil
 }
+func (c *Core) GetExtensions(authID string) ([]string, error) {
+
+	var out []string
+	if err := c.q.GetExtensions.Select(&out, authID); err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.media}", "error", pqErrMsg(err)))
+	}
+
+	return out, nil
+}
+func (c *Core) GetFilePath(authID string) (string, error) {
+
+	var out string
+	if err := c.q.GetFilePath.Get(&out, authID); err != nil {
+		if len(out) == 0 {
+			return "", echo.NewHTTPError(http.StatusBadRequest,
+				c.i18n.Ts("globals.messages.notFound", "name",
+					fmt.Sprintf("{globals.terms.media}")))
+		}
+		return "", echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.media}", "error", pqErrMsg(err)))
+	}
+
+	return out, nil
+}

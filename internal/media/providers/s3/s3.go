@@ -63,7 +63,7 @@ func NewS3Store(opt Opt) (media.Store, error) {
 }
 
 // Put takes in the filename, the content type and file object itself and uploads to S3.
-func (c *Client) Put(name string, cType string, file io.ReadSeeker) (string, error) {
+func (c *Client) Put(name string, cType string, file io.ReadSeeker, filePath string) (string, error) {
 	// Upload input parameters
 	p := simples3.UploadInput{
 		Bucket:      c.opts.Bucket,
