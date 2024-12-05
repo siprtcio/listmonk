@@ -1108,6 +1108,16 @@ SELECT jsonb_array_elements_text(value) FROM settings WHERE key = 'upload.extens
 -- name: get-file-path
 SELECT value FROM settings WHERE key = 'upload.filesystem.upload_path' AND authid = $1;
 
+-- name: get-upload-provider
+SELECT value FROM settings WHERE key = 'upload.provider' AND authid = $1;
+
+-- name: get-s3-upload-data
+SELECT key, value FROM settings WHERE key LIKE 'upload.s3.%' AND authid = $1;
+
+-- name: get-file-system-upload-data
+SELECT key, value FROM settings 
+WHERE key IN ('upload.filesystem.upload_path', 'upload.filesystem.upload_uri', 'app.root_url') AND authid = $1;
+
 -- links
 -- name: create-link
 INSERT INTO links (uuid, url, authid) VALUES($1, $2, $3) ON CONFLICT (url) DO UPDATE SET url=EXCLUDED.url RETURNING uuid;

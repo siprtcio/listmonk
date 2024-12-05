@@ -600,14 +600,43 @@ func initPostbackMessengers(m *manager.Manager) []manager.Messenger {
 	return out
 }
 
-// initMediaStore initializes Upload manager with a custom backend.
-func initMediaStore() media.Store {
-	switch provider := ko.String("upload.provider"); provider {
-	case "s3":
-		var o s3.Opt
-		ko.Unmarshal("upload.s3", &o)
+func parseS3Opts(data map[string]interface{}) s3.Opt {
+	expiryStr, ok := data["expiry"].(string)
+	if !ok {
+		lo.Fatalf("invalid type for expiry: expected string, got %T", data["expiry"])
+	}
+	expiryStr = strings.Trim(expiryStr, "\"")
+	expiry, err := time.ParseDuration(expiryStr)
+	if err != nil {
+		lo.Fatalf("error parsing expiry duration: %s", err)
+	}
 
-		up, err := s3.NewS3Store(o)
+	return s3.Opt{
+		URL:        data["url"].(string),
+		PublicURL:  data["public_url"].(string),
+		AccessKey:  data["aws_access_key_id"].(string),
+		SecretKey:  data["aws_secret_access_key"].(string),
+		Region:     data["aws_default_region"].(string),
+		Bucket:     data["bucket"].(string),
+		BucketPath: data["bucket_path"].(string),
+		BucketType: data["bucket_type"].(string),
+		Expiry:     expiry,
+	}
+}
+func parseFileSystemOpts(data map[string]interface{}) filesystem.Opts {
+	return filesystem.Opts{
+		UploadPath: data["upload_path"].(string),
+		UploadURI:  data["upload_uri"].(string),
+		RootURL:    data["root_url"].(string),
+	}
+}
+
+// initMediaStore initializes Upload manager with a custom backend.
+func initMediaStore(upload_provider string, uploadData map[string]interface{}) media.Store {
+	switch upload_provider {
+	case "s3":
+		opts := parseS3Opts(uploadData)
+		up, err := s3.NewS3Store(opts)
 		if err != nil {
 			lo.Fatalf("error initializing s3 upload provider %s", err)
 		}
@@ -615,13 +644,10 @@ func initMediaStore() media.Store {
 		return up
 
 	case "filesystem":
-		var o filesystem.Opts
-
-		ko.Unmarshal("upload.filesystem", &o)
-		o.RootURL = ko.String("app.root_url")
-		o.UploadPath = filepath.Clean(o.UploadPath)
-		o.UploadURI = filepath.Clean(o.UploadURI)
-		up, err := filesystem.New(o)
+		opts := parseFileSystemOpts(uploadData)
+		opts.UploadPath = filepath.Clean(opts.UploadPath)
+		opts.UploadURI = filepath.Clean(opts.UploadURI)
+		up, err := filesystem.New(opts)
 		if err != nil {
 			lo.Fatalf("error initializing filesystem upload provider %s", err)
 		}

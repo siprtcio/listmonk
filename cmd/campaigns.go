@@ -175,7 +175,6 @@ func handlePreviewCampaign(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
 	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	initMediaStore()
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 	for _, m := range initPostbackMessengers(app.manager) {
@@ -267,7 +266,6 @@ func handleCreateCampaign(c echo.Context) error {
 	}
 
 	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	initMediaStore()
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 	for _, m := range initPostbackMessengers(app.manager) {
@@ -389,7 +387,6 @@ func handleUpdateCampaign(c echo.Context) error {
 	}
 
 	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	initMediaStore()
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 	for _, m := range initPostbackMessengers(app.manager) {
@@ -448,9 +445,25 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	uploadProvider, err := app.core.GetUploadProvider(authID)
+	if err != nil {
+		return err
+	}
+	var uploadData map[string]interface{}
+	if uploadProvider == "filesystem" {
+		uploadData, err = app.core.GetFileSystemUploadData(authID)
+		if err != nil {
+			return err
+		}
+	} else {
+		uploadData, err = app.core.GetS3UploadData(authID)
+		if err != nil {
+			return err
+		}
+	}
 
 	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	initMediaStore()
+	app.media = initMediaStore(uploadProvider, uploadData)
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 	for _, m := range initPostbackMessengers(app.manager) {
@@ -595,7 +608,6 @@ func handleTestCampaign(c echo.Context) error {
 	}
 
 	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	initMediaStore()
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 	for _, m := range initPostbackMessengers(app.manager) {

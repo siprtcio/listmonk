@@ -61,8 +61,29 @@ func handleUploadMedia(c echo.Context) error {
 			app.i18n.Ts("media.invalidFileName", "name", file.Filename))
 	}
 
+	uploadProvider, err := app.core.GetUploadProvider(authID)
+	if err != nil {
+		return err
+	}
+	var uploadData map[string]interface{}
+	if uploadProvider == "filesystem" {
+		uploadData, err = app.core.GetFileSystemUploadData(authID)
+		if err != nil {
+			return err
+		}
+	} else {
+		uploadData, err = app.core.GetS3UploadData(authID)
+		if err != nil {
+			return err
+		}
+	}
+
 	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	initMediaStore()
+	app.media = initMediaStore(uploadProvider, uploadData)
+	if app.media == nil {
+		log.Println("app.media is nil during initialization")
+	}
+
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 	for _, m := range initPostbackMessengers(app.manager) {
@@ -99,7 +120,8 @@ func handleUploadMedia(c echo.Context) error {
 		cleanUp = true
 		return err
 	}
-	log.Println("File Path:", filePath)
+	filePath = strings.Trim(filePath, "\"")
+	filePath = strings.TrimSpace(filePath)
 
 	// Upload the file.
 	fName, err = app.media.Put(fName, contentType, src, filePath)
@@ -161,7 +183,7 @@ func handleUploadMedia(c echo.Context) error {
 			"height": height,
 		}
 	}
-	m, err := app.core.InsertMedia(fName, thumbfName, contentType, meta, app.constants.MediaUpload.Provider, app.media, authID)
+	m, err := app.core.InsertMedia(fName, thumbfName, contentType, meta, uploadProvider, app.media, authID)
 	if err != nil {
 		cleanUp = true
 		return err
@@ -183,6 +205,36 @@ func handleGetMedia(c echo.Context) error {
 	if authID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
+	uploadProvider, err := app.core.GetUploadProvider(authID)
+	if err != nil {
+		return err
+	}
+	var uploadData map[string]interface{}
+	if uploadProvider == "filesystem" {
+		uploadData, err = app.core.GetFileSystemUploadData(authID)
+		if err != nil {
+			return err
+		}
+	} else {
+		uploadData, err = app.core.GetS3UploadData(authID)
+		if err != nil {
+			return err
+		}
+	}
+	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	app.media = initMediaStore(uploadProvider, uploadData)
+	if app.media == nil {
+		log.Println("app.media is nil during initialization")
+	}
+
+	app.manager = initCampaignManager(app.queries, app.constants, app)
+	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	for _, m := range initPostbackMessengers(app.manager) {
+		app.messengers[m.Name()] = m
+	}
+	for _, m := range app.messengers {
+		app.manager.AddMessenger(m)
+	}
 
 	// Fetch one list.
 	if id > 0 {
@@ -193,7 +245,7 @@ func handleGetMedia(c echo.Context) error {
 		return c.JSON(http.StatusOK, okResp{out})
 	}
 
-	res, total, err := app.core.QueryMedia(app.constants.MediaUpload.Provider, app.media, query, pg.Offset, pg.Limit, authID)
+	res, total, err := app.core.QueryMedia(uploadProvider, app.media, query, pg.Offset, pg.Limit, authID)
 	if err != nil {
 		return err
 	}

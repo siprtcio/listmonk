@@ -93,12 +93,15 @@ type Queries struct {
 	RegisterCampaignView     *sqlx.Stmt `query:"register-campaign-view"`
 	DeleteCampaign           *sqlx.Stmt `query:"delete-campaign"`
 
-	InsertMedia   *sqlx.Stmt `query:"insert-media"`
-	GetMedia      *sqlx.Stmt `query:"get-media"`
-	QueryMedia    *sqlx.Stmt `query:"query-media"`
-	DeleteMedia   *sqlx.Stmt `query:"delete-media"`
-	GetExtensions *sqlx.Stmt `query:"get-extensions"`
-	GetFilePath   *sqlx.Stmt `query:"get-file-path"`
+	InsertMedia             *sqlx.Stmt `query:"insert-media"`
+	GetMedia                *sqlx.Stmt `query:"get-media"`
+	QueryMedia              *sqlx.Stmt `query:"query-media"`
+	DeleteMedia             *sqlx.Stmt `query:"delete-media"`
+	GetExtensions           *sqlx.Stmt `query:"get-extensions"`
+	GetFilePath             *sqlx.Stmt `query:"get-file-path"`
+	GetUploadProvider       *sqlx.Stmt `query:"get-upload-provider"`
+	GetS3UploadData         *sqlx.Stmt `query:"get-s3-upload-data"`
+	GetFileSystemUploadData *sqlx.Stmt `query:"get-file-system-upload-data"`
 
 	CreateTemplate      *sqlx.Stmt `query:"create-template"`
 	GetTemplates        *sqlx.Stmt `query:"get-templates"`
