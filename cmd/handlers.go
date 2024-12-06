@@ -146,7 +146,7 @@ func initHTTPHandlers(e *echo.Echo, app *App) {
 	g.PUT("/api/campaigns/:id/status", handleUpdateCampaignStatus)
 	g.PUT("/api/campaigns/:id/archive", handleUpdateCampaignArchive)
 	g.DELETE("/api/campaigns/:id", handleDeleteCampaign)
-	g.GET("/api/campaigns-report", handleGetCampaignsReport)
+	g.GET("/api/campaigns/report", handleGetCampaignsReport)
 
 	g.GET("/api/media", handleGetMedia)
 	g.GET("/api/media/:id", handleGetMedia)

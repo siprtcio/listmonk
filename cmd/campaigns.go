@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/knadh/listmonk/logger"
 	"github.com/knadh/listmonk/models"
 	"github.com/labstack/echo/v4"
 	"github.com/lib/pq"
@@ -52,6 +53,18 @@ var (
 	regexFromAddress = regexp.MustCompile(`((.+?)\s)?<(.+?)@(.+?)>`)
 	regexSlug        = regexp.MustCompile(`[^\p{L}\p{M}\p{N}]`)
 )
+
+func initializeSettings(app *App, authID string) {
+	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	app.manager = initCampaignManager(app.queries, app.constants, app)
+	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	for _, m := range initPostbackMessengers(app.manager) {
+		app.messengers[m.Name()] = m
+	}
+	for _, m := range app.messengers {
+		app.manager.AddMessenger(m)
+	}
+}
 
 // handleGetCampaigns handles retrieval of campaigns.
 func handleGetCampaigns(c echo.Context) error {
@@ -174,15 +187,7 @@ func handlePreviewCampaign(c echo.Context) error {
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
-	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	app.manager = initCampaignManager(app.queries, app.constants, app)
-	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
-	for _, m := range initPostbackMessengers(app.manager) {
-		app.messengers[m.Name()] = m
-	}
-	for _, m := range app.messengers {
-		app.manager.AddMessenger(m)
-	}
+	initializeSettings(app, authID)
 
 	camp, err := app.core.GetCampaignForPreview(id, tplID, authID)
 	if err != nil {
@@ -265,15 +270,7 @@ func handleCreateCampaign(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
 
-	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	app.manager = initCampaignManager(app.queries, app.constants, app)
-	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
-	for _, m := range initPostbackMessengers(app.manager) {
-		app.messengers[m.Name()] = m
-	}
-	for _, m := range app.messengers {
-		app.manager.AddMessenger(m)
-	}
+	initializeSettings(app, authID)
 
 	if err := c.Bind(&o); err != nil {
 		return err
@@ -386,15 +383,7 @@ func handleUpdateCampaign(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("campaigns.cantUpdate"))
 	}
 
-	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	app.manager = initCampaignManager(app.queries, app.constants, app)
-	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
-	for _, m := range initPostbackMessengers(app.manager) {
-		app.messengers[m.Name()] = m
-	}
-	for _, m := range app.messengers {
-		app.manager.AddMessenger(m)
-	}
+	initializeSettings(app, authID)
 
 	// Read the incoming params into the existing campaign fields from the DB.
 	// This allows updating of values that have been sent whereas fields
@@ -462,16 +451,8 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 		}
 	}
 
-	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	initializeSettings(app, authID)
 	app.media = initMediaStore(uploadProvider, uploadData)
-	app.manager = initCampaignManager(app.queries, app.constants, app)
-	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
-	for _, m := range initPostbackMessengers(app.manager) {
-		app.messengers[m.Name()] = m
-	}
-	for _, m := range app.messengers {
-		app.manager.AddMessenger(m)
-	}
 
 	go app.manager.Run()
 
@@ -606,16 +587,7 @@ func handleTestCampaign(c echo.Context) error {
 	if campID < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.errorID"))
 	}
-
-	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
-	app.manager = initCampaignManager(app.queries, app.constants, app)
-	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
-	for _, m := range initPostbackMessengers(app.manager) {
-		app.messengers[m.Name()] = m
-	}
-	for _, m := range app.messengers {
-		app.manager.AddMessenger(m)
-	}
+	initializeSettings(app, authID)
 	// Get and validate fields.
 	if err := c.Bind(&req); err != nil {
 		return err
@@ -875,10 +847,48 @@ func handleGetCampaignsReport(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
 
-	campaigns, err := app.core.GetCampaignReport(campaignIDs, authID, order, orderBy, status)
+	fromDate := c.QueryParam("from_date")
+	toDate := c.QueryParam("to_date")
+	if fromDate != "" || toDate != "" {
+		RFC3339dateLayout := "2006-01-02"
+		fromdate, err := time.Parse(RFC3339dateLayout, fromDate)
+
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Please validate from date"})
+		}
+
+		todate, err := time.Parse(RFC3339dateLayout, toDate)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Please validate to date"})
+		}
+
+		now := time.Now()
+		if fromdate.After(now) || todate.After(now) {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Dates cannot be in the future"})
+		}
+
+		if fromdate.After(todate) {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "To date should be after the from date. Please validate from & to date"})
+		}
+	}
+
+	logger.Debug("campaign report request", logger.LogFields{
+		"authID":      authID,
+		"campaignIDs": campaignIDs,
+		"order":       order,
+		"orderBy":     orderBy,
+		"status":      status,
+		"fromDate":    fromDate,
+		"toDate":      toDate,
+	})
+	campaigns, err := app.core.GetCampaignReport(campaignIDs, authID, order, orderBy, status, fromDate, toDate)
 	if err != nil {
 		return err
 	}
 
-	return c.JSON(http.StatusOK, okResp{campaigns})
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"campaigns": campaigns,
+		"total":     len(campaigns),
+	})
+
 }

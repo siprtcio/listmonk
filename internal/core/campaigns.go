@@ -653,7 +653,40 @@ func (c *Core) DeleteCampaignLinkClicks(before time.Time, authID string) error {
 
 // GetCampaignReport retrieves the campaign reports.
 // If IDs are provided then, those specific campaign reports are returned, otherwise all campaign reports are returned.
-func (c *Core) GetCampaignReport(campaignIDs []int, authID string, order string, orderBy string, status string) ([]models.CampaignReport, error) {
+func (c *Core) GetCampaignReport(campaignIDs []int, authID string, order string, orderBy string, status string, fromDate string, toDate string) ([]models.CampaignReport, error) {
+	validStatuses := map[string]bool{
+		"draft": true, "running": true, "scheduled": true,
+		"paused": true, "cancelled": true, "finished": true,
+	}
+
+	if status != "" && !validStatuses[status] {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "Invalid campaign status")
+	}
+	var statusPtr *string
+	if status != "" {
+		statusPtr = &status
+	}
+
+	if fromDate == "" || toDate == "" {
+		now := time.Now()
+		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+		endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
+
+		fromDate = startOfDay.Format("2006-01-02")
+		toDate = endOfDay.Format("2006-01-02")
+	}
+
+	formattedFromDate, err := time.Parse("2006-01-02", fromDate)
+	if err != nil {
+		return nil, err
+	}
+
+	formattedToDate, err := time.Parse("2006-01-02", toDate)
+	if err != nil {
+		return nil, err
+	}
+
+	formattedToDate = formattedToDate.Add(24 * time.Hour).Add(-time.Nanosecond)
 
 	var campaignReports []models.CampaignReport
 
@@ -673,7 +706,7 @@ func (c *Core) GetCampaignReport(campaignIDs []int, authID string, order string,
 	}
 	defer tx.Rollback()
 
-	if err := tx.Select(&campaignReports, stmt, pq.Array(campaignIDs), authID, status); err != nil {
+	if err := tx.Select(&campaignReports, stmt, pq.Array(campaignIDs), authID, statusPtr, formattedFromDate, formattedToDate); err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.campaigns}", "error", pqErrMsg(err)))
 	}

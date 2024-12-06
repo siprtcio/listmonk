@@ -8,7 +8,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/knadh/listmonk/internal/media/providers/filesystem"
+	"github.com/knadh/listmonk/internal/media/providers/s3"
 )
 
 var (
@@ -129,4 +133,35 @@ func isASCII(s string) bool {
 		}
 	}
 	return true
+}
+
+func parseS3Opts(data map[string]interface{}) s3.Opt {
+	expiryStr, ok := data["expiry"].(string)
+	if !ok {
+		lo.Fatalf("invalid type for expiry: expected string, got %T", data["expiry"])
+	}
+	expiryStr = strings.Trim(expiryStr, "\"")
+	expiry, err := time.ParseDuration(expiryStr)
+	if err != nil {
+		lo.Fatalf("error parsing expiry duration: %s", err)
+	}
+
+	return s3.Opt{
+		URL:        data["url"].(string),
+		PublicURL:  data["public_url"].(string),
+		AccessKey:  data["aws_access_key_id"].(string),
+		SecretKey:  data["aws_secret_access_key"].(string),
+		Region:     data["aws_default_region"].(string),
+		Bucket:     data["bucket"].(string),
+		BucketPath: data["bucket_path"].(string),
+		BucketType: data["bucket_type"].(string),
+		Expiry:     expiry,
+	}
+}
+func parseFileSystemOpts(data map[string]interface{}) filesystem.Opts {
+	return filesystem.Opts{
+		UploadPath: data["upload_path"].(string),
+		UploadURI:  data["upload_uri"].(string),
+		RootURL:    data["root_url"].(string),
+	}
 }
