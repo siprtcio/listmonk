@@ -1,5 +1,5 @@
 # First stage: Build the application
-FROM --platform=$BUILDPLATFORM golang:1.20 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.22 AS builder
 
 # Install Node.js and Yarn
 RUN apt-get update && apt-get install -y curl \
