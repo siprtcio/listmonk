@@ -350,7 +350,7 @@ func prepareQueries(qMap goyesql.Queries, db *sqlx.DB, ko *koanf.Koanf) *models.
 }
 
 // initSettings loads settings from the DB into the given Koanf map.
-func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf, authID string) {
+func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf, authID string) error {
 	var s types.JSONText
 
 	log.Println("auth_id", authID)
@@ -366,7 +366,7 @@ func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf, authID string) {
 	}
 
 	if len(s) == 0 {
-		lo.Fatalf("error: settings retrieved from DB are empty")
+		return fmt.Errorf("error: settings retrieved from DB are empty for %s", authID)
 	}
 
 	// Setting keys are dot separated, eg: app.favicon_url. Unflatten them into
@@ -378,6 +378,7 @@ func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf, authID string) {
 	if err := ko.Load(confmap.Provider(out, "."), nil); err != nil {
 		lo.Fatalf("error parsing settings from DB: %v", err)
 	}
+	return nil
 }
 
 func initConstants() *constants {

@@ -667,26 +667,27 @@ func (c *Core) GetCampaignReport(campaignIDs []int, authID string, order string,
 		statusPtr = &status
 	}
 
-	if fromDate == "" || toDate == "" {
-		now := time.Now()
-		startOfDay := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
-		endOfDay := startOfDay.Add(24 * time.Hour).Add(-time.Nanosecond)
+	var (
+		fromDatePtr *time.Time
+		toDatePtr   *time.Time
+	)
 
-		fromDate = startOfDay.Format("2006-01-02")
-		toDate = endOfDay.Format("2006-01-02")
+	if fromDate != "" {
+		formattedFromDate, err := time.Parse("2006-01-02", fromDate)
+		if err != nil {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "Invalid from date format")
+		}
+		fromDatePtr = &formattedFromDate
 	}
 
-	formattedFromDate, err := time.Parse("2006-01-02", fromDate)
-	if err != nil {
-		return nil, err
+	if toDate != "" {
+		formattedToDate, err := time.Parse("2006-01-02", toDate)
+		if err != nil {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "Invalid to date format")
+		}
+		formattedToDate = formattedToDate.Add(24*time.Hour - time.Nanosecond)
+		toDatePtr = &formattedToDate
 	}
-
-	formattedToDate, err := time.Parse("2006-01-02", toDate)
-	if err != nil {
-		return nil, err
-	}
-
-	formattedToDate = formattedToDate.Add(24 * time.Hour).Add(-time.Nanosecond)
 
 	var campaignReports []models.CampaignReport
 
@@ -706,7 +707,7 @@ func (c *Core) GetCampaignReport(campaignIDs []int, authID string, order string,
 	}
 	defer tx.Rollback()
 
-	if err := tx.Select(&campaignReports, stmt, pq.Array(campaignIDs), authID, statusPtr, formattedFromDate, formattedToDate); err != nil {
+	if err := tx.Select(&campaignReports, stmt, pq.Array(campaignIDs), authID, statusPtr, fromDatePtr, toDatePtr); err != nil {
 		return nil, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.campaigns}", "error", pqErrMsg(err)))
 	}

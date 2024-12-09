@@ -54,8 +54,11 @@ var (
 	regexSlug        = regexp.MustCompile(`[^\p{L}\p{M}\p{N}]`)
 )
 
-func initializeSettings(app *App, authID string) {
-	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+func initializeSettings(app *App, authID string) error {
+	err := initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	if err != nil {
+		return fmt.Errorf("fetching settings : %w", err)
+	}
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
 	for _, m := range initPostbackMessengers(app.manager) {
@@ -64,6 +67,7 @@ func initializeSettings(app *App, authID string) {
 	for _, m := range app.messengers {
 		app.manager.AddMessenger(m)
 	}
+	return nil
 }
 
 // handleGetCampaigns handles retrieval of campaigns.
@@ -187,7 +191,9 @@ func handlePreviewCampaign(c echo.Context) error {
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
-	initializeSettings(app, authID)
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 
 	camp, err := app.core.GetCampaignForPreview(id, tplID, authID)
 	if err != nil {
@@ -270,7 +276,9 @@ func handleCreateCampaign(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
 	}
 
-	initializeSettings(app, authID)
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 
 	if err := c.Bind(&o); err != nil {
 		return err
@@ -383,7 +391,9 @@ func handleUpdateCampaign(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("campaigns.cantUpdate"))
 	}
 
-	initializeSettings(app, authID)
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 
 	// Read the incoming params into the existing campaign fields from the DB.
 	// This allows updating of values that have been sent whereas fields
@@ -451,7 +461,9 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 		}
 	}
 
-	initializeSettings(app, authID)
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 	app.media = initMediaStore(uploadProvider, uploadData)
 
 	go app.manager.Run()
@@ -587,7 +599,9 @@ func handleTestCampaign(c echo.Context) error {
 	if campID < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.errorID"))
 	}
-	initializeSettings(app, authID)
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 	// Get and validate fields.
 	if err := c.Bind(&req); err != nil {
 		return err

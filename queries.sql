@@ -1010,7 +1010,7 @@ FROM campaigns
 LEFT JOIN templates ON templates.id = campaigns.template_id
 WHERE ($1::int[] IS NULL OR array_length($1::int[], 1) = 0 OR campaigns.id = ANY($1::int[]))
 AND campaigns.authid = $2 AND (NULLIF($3, '') IS NULL OR campaigns.status = $3::campaign_status) 
-AND (campaigns.created_at >= $4 AND campaigns.created_at < $5)
+AND ($4::timestamp IS NULL OR campaigns.created_at >= $4) AND ($5::timestamp IS NULL OR campaigns.created_at < $5)
 ORDER BY %order%;
 
 
