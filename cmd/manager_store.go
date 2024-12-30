@@ -37,6 +37,12 @@ func (s *store) NextCampaigns(currentIDs []int64, sentCounts []int64) ([]*models
 	return out, err
 }
 
+func (s *store) GetMessengerByAuthId(AuthID string, Messenger string) (string, error) {
+	var out string
+	err := s.queries.GetMessengerByAuthID.Get(&out, AuthID, Messenger)
+	return out, err
+}
+
 // NextSubscribers retrieves a subset of subscribers of a given campaign.
 // Since batches are processed sequentially, the retrieval is ordered by ID,
 // and every batch takes the last ID of the last batch and fetches the next

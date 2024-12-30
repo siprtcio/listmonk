@@ -92,6 +92,7 @@ type Queries struct {
 	UpdateCampaignArchive    *sqlx.Stmt `query:"update-campaign-archive"`
 	RegisterCampaignView     *sqlx.Stmt `query:"register-campaign-view"`
 	DeleteCampaign           *sqlx.Stmt `query:"delete-campaign"`
+	GetMessengerByAuthID     *sqlx.Stmt `query:"get-messenger-by-authid"`
 
 	InsertMedia             *sqlx.Stmt `query:"insert-media"`
 	GetMedia                *sqlx.Stmt `query:"get-media"`

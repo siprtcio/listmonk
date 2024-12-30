@@ -1273,3 +1273,7 @@ DELETE FROM bounces WHERE subscriber_id = (SELECT id FROM sub);
 -- name: get-db-info
 SELECT JSON_BUILD_OBJECT('version', (SELECT VERSION()),
                         'size_mb', (SELECT ROUND(pg_database_size((SELECT CURRENT_DATABASE()))/(1024^2)))) AS info;
+
+-- name: get-messenger-by-authid
+SELECT (messenger->>'root_url') AS fax_billing_root_url FROM settings, jsonb_array_elements(value::jsonb) AS messenger
+WHERE key = 'messengers' AND messenger->>'name' = $2 AND authid = $1;

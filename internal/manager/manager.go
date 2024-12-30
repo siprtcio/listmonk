@@ -38,13 +38,14 @@ type Store interface {
 	CreateLink(url string, authID string) (string, error)
 	BlocklistSubscriber(id int64) error
 	DeleteSubscriber(id int64) error
+	GetMessengerByAuthId(AuthID string, Messenger string) (string, error)
 }
 
 // Messenger is an interface for a generic messaging backend,
 // for instance, e-mail, SMS etc.
 type Messenger interface {
 	Name() string
-	Push(models.Message) error
+	Push(models.Message, string) error
 	Flush() error
 	Close() error
 }
@@ -88,6 +89,9 @@ type Manager struct {
 	slidingStart time.Time
 
 	tplFuncs template.FuncMap
+
+	activePipes sync.Map // Tracks campaigns currently being processed
+
 }
 
 // CampaignMessage represents an instance of campaign message to be pushed out,
@@ -142,6 +146,11 @@ type Config struct {
 type msgError struct {
 	st  *pipe
 	err error
+}
+
+type campaignState struct {
+	inProgress bool
+	mu         sync.Mutex
 }
 
 var pushTimeout = time.Second * 3
@@ -405,21 +414,48 @@ func (m *Manager) scanCampaigns(tick time.Duration) {
 			}
 
 			for _, c := range campaigns {
-				// Create a new pipe that'll handle this campaign's states.
-				p, err := m.newPipe(c)
-				if err != nil {
-					m.log.Printf("error processing campaign (%s): %v", c.Name, err)
-					continue
+				val, exists := m.activePipes.Load(c.ID)
+				var state *campaignState
+				if exists {
+					state = val.(*campaignState)
+				} else {
+					state = &campaignState{}
+					m.activePipes.Store(c.ID, state)
 				}
-				m.log.Printf("start processing campaign (%s)", c.Name)
 
-				// If subscriber processing is busy, move on. Blocking and waiting
-				// can end up in a race condition where the waiting campaign's
-				// state in the data source has changed.
-				select {
-				case m.nextPipes <- p:
-				default:
+				// Lock state and check if the campaign is already being processed
+				state.mu.Lock()
+				if state.inProgress {
+					state.mu.Unlock()
+					m.log.Printf("Campaign %s is already being processed, skipping.", c.Name)
+					continue // Skip if already being processed
 				}
+
+				// Mark campaign as in progress
+				state.inProgress = true
+				state.mu.Unlock()
+
+				// Start processing the campaign in a separate goroutine
+				go func(c *models.Campaign) {
+					defer func() {
+						// Ensure cleanup after processing
+						state.mu.Lock()
+						state.inProgress = false
+						state.mu.Unlock()
+					}()
+
+					// Log that the campaign is being processed
+					log.Printf("Start processing campaign %s", c.Name)
+					p, err := m.newPipe(c)
+					if err != nil {
+						m.log.Printf("error processing campaign (%s): %v", c.Name, err)
+						return
+					}
+					select {
+					case m.nextPipes <- p:
+					default:
+					}
+				}(c) // Process the campaign in a separate goroutine
 			}
 		}
 	}
@@ -485,7 +521,11 @@ func (m *Manager) worker() {
 
 			out.Headers = h
 
-			err := m.messengers[msg.Campaign.Messenger].Push(out)
+			rootUrl, err := m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
+			if err != nil {
+				m.log.Printf("error fetching messenger in campaign %s: %v", msg.Campaign.Name, err)
+			}
+			err = m.messengers[msg.Campaign.Messenger].Push(out, rootUrl)
 			if err != nil {
 				m.log.Printf("error sending message in campaign %s: subscriber %d: %v", msg.Campaign.Name, msg.Subscriber.ID, err)
 			}
@@ -513,7 +553,11 @@ func (m *Manager) worker() {
 				return
 			}
 
-			err := m.messengers[msg.Messenger].Push(msg)
+			rootUrl, err := m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
+			if err != nil {
+				m.log.Printf("error fetching messenger in campaign %s: %v", msg.Campaign.Name, err)
+			}
+			err = m.messengers[msg.Messenger].Push(msg, rootUrl)
 			if err != nil {
 				m.log.Printf("error sending message '%s': %v", msg.Subject, err)
 			}
