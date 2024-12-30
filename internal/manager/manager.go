@@ -521,9 +521,14 @@ func (m *Manager) worker() {
 
 			out.Headers = h
 
-			rootUrl, err := m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
-			if err != nil {
-				m.log.Printf("error fetching messenger in campaign %s: %v", msg.Campaign.Name, err)
+			var rootUrl string
+			var err error
+			if msg.Campaign.Messenger != "email" {
+				rootUrl, err = m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
+				if err != nil {
+					m.log.Printf("error fetching messenger in campaign %s: %v", msg.Campaign.Name, err)
+				}
+				m.log.Printf("sending message in campaign %s: at URL %s", msg.Campaign.Name, rootUrl)
 			}
 			err = m.messengers[msg.Campaign.Messenger].Push(out, rootUrl)
 			if err != nil {
