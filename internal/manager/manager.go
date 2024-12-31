@@ -12,6 +12,7 @@ import (
 
 	"github.com/Masterminds/sprig/v3"
 	"github.com/knadh/listmonk/internal/i18n"
+	"github.com/knadh/listmonk/logger"
 	"github.com/knadh/listmonk/models"
 )
 
@@ -445,10 +446,15 @@ func (m *Manager) scanCampaigns(tick time.Duration) {
 					}()
 
 					// Log that the campaign is being processed
-					log.Printf("Start processing campaign %s", c.Name)
+					logger.Info("Start processing campaign", logger.LogFields{
+						"Campaign Name": c.Name,
+					})
 					p, err := m.newPipe(c)
 					if err != nil {
-						m.log.Printf("error processing campaign (%s): %v", c.Name, err)
+						logger.Error("error processing campaign", logger.LogFields{
+							"Campaign Name": c.Name,
+							"Error":         err,
+						})
 						return
 					}
 					select {
@@ -526,13 +532,23 @@ func (m *Manager) worker() {
 			if msg.Campaign.Messenger != "email" {
 				rootUrl, err = m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
 				if err != nil {
-					m.log.Printf("error fetching messenger in campaign %s: %v", msg.Campaign.Name, err)
+					logger.Error("Error fetching messenger in campaign", logger.LogFields{
+						"Campaign Name": msg.Campaign.Name,
+						"Error":         err,
+					})
 				}
-				m.log.Printf("sending message in campaign %s: at URL %s", msg.Campaign.Name, rootUrl)
+				logger.Info("Sending message in campaign", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Root URL":      rootUrl,
+				})
 			}
 			err = m.messengers[msg.Campaign.Messenger].Push(out, rootUrl)
 			if err != nil {
-				m.log.Printf("error sending message in campaign %s: subscriber %d: %v", msg.Campaign.Name, msg.Subscriber.ID, err)
+				logger.Error("Error sending message in campaign for subscriber", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Subscriber":    msg.Subscriber.ID,
+					"Error":         err,
+				})
 			}
 
 			// Increment the send rate or the error counter if there was an error.
@@ -563,13 +579,23 @@ func (m *Manager) worker() {
 			if msg.Campaign.Messenger != "email" {
 				rootUrl, err = m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
 				if err != nil {
-					m.log.Printf("error fetching messenger in campaign %s: %v", msg.Campaign.Name, err)
+					logger.Error("Error fetching messenger in campaign", logger.LogFields{
+						"Campaign Name": msg.Campaign.Name,
+						"Error":         err,
+					})
 				}
-				m.log.Printf("sending message in campaign %s: at URL %s", msg.Campaign.Name, rootUrl)
+				logger.Info("Sending message in campaign", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Root URL":      rootUrl,
+				})
 			}
 			err = m.messengers[msg.Messenger].Push(msg, rootUrl)
 			if err != nil {
-				m.log.Printf("error sending message '%s': %v", msg.Subject, err)
+				logger.Error("Error sending message in campaign for subscriber", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Subscriber":    msg.Subscriber.ID,
+					"Error":         err,
+				})
 			}
 		}
 	}
