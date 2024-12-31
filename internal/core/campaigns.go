@@ -1,9 +1,11 @@
 package core
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gofrs/uuid/v5"
@@ -647,4 +649,80 @@ func (c *Core) DeleteCampaignLinkClicks(before time.Time, authID string) error {
 	}
 
 	return nil
+}
+
+// GetCampaignReport retrieves the campaign reports.
+// If IDs are provided then, those specific campaign reports are returned, otherwise all campaign reports are returned.
+func (c *Core) GetCampaignReport(campaignIDs []int, authID string, order string, orderBy string, status string, fromDate string, toDate string) ([]models.CampaignReport, error) {
+	validStatuses := map[string]bool{
+		"draft": true, "running": true, "scheduled": true,
+		"paused": true, "cancelled": true, "finished": true,
+	}
+
+	if status != "" && !validStatuses[status] {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, "Invalid campaign status")
+	}
+	var statusPtr *string
+	if status != "" {
+		statusPtr = &status
+	}
+
+	var (
+		fromDatePtr *time.Time
+		toDatePtr   *time.Time
+	)
+
+	if fromDate != "" {
+		formattedFromDate, err := time.Parse("2006-01-02", fromDate)
+		if err != nil {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "Invalid from date format")
+		}
+		fromDatePtr = &formattedFromDate
+	}
+
+	if toDate != "" {
+		formattedToDate, err := time.Parse("2006-01-02", toDate)
+		if err != nil {
+			return nil, echo.NewHTTPError(http.StatusBadRequest, "Invalid to date format")
+		}
+		formattedToDate = formattedToDate.Add(24*time.Hour - time.Nanosecond)
+		toDatePtr = &formattedToDate
+	}
+
+	var campaignReports []models.CampaignReport
+
+	if !strSliceContains(orderBy, campQuerySortFields) {
+		orderBy = "campaigns.id"
+	}
+	if order != SortAsc && order != SortDesc {
+		order = SortDesc
+	}
+
+	stmt := strings.ReplaceAll(c.q.GetCampaignReport, "%order%", orderBy+" "+order)
+
+	tx, err := c.db.BeginTxx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		c.log.Printf("error preparing campaign query: %v", err)
+		return nil, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("campaigns.errorPreparingQuery", "error", pqErrMsg(err)))
+	}
+	defer tx.Rollback()
+
+	if err := tx.Select(&campaignReports, stmt, pq.Array(campaignIDs), authID, statusPtr, fromDatePtr, toDatePtr); err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.campaigns}", "error", pqErrMsg(err)))
+	}
+
+	// Handle NULL values in JSON fields
+	for i, report := range campaignReports {
+		if report.Lists == nil {
+			emptyJSON := json.RawMessage("[]")
+			campaignReports[i].Lists = &emptyJSON
+		}
+		if report.Media == nil {
+			emptyJSON := json.RawMessage("[]")
+			campaignReports[i].Media = &emptyJSON
+		}
+	}
+
+	return campaignReports, nil
 }

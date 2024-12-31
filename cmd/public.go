@@ -715,7 +715,7 @@ func handleSelfExportSubscriberData(c echo.Context) error {
 				Header:  manager.MakeAttachmentHeader(fname, "base64", "application/json"),
 			},
 		},
-	}); err != nil {
+	},""); err != nil {
 		app.log.Printf("error e-mailing subscriber profile: %s", err)
 		return c.Render(http.StatusInternalServerError, tplMessage,
 			makeMsgTpl(app.i18n.T("public.errorTitle"), "", app.i18n.Ts("public.errorProcessingRequest")))

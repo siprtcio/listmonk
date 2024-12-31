@@ -29,11 +29,12 @@ func New(opts Opts) (media.Store, error) {
 }
 
 // Put accepts the filename, the content type and file object itself and stores the file in disk.
-func (c *Client) Put(filename string, cType string, src io.ReadSeeker) (string, error) {
+func (c *Client) Put(filename string, cType string, src io.ReadSeeker, filePath string) (string, error) {
 	var out *os.File
 
 	// Get the directory path
-	dir := getDir(c.opts.UploadPath)
+	// dir := getDir(c.opts.UploadPath)
+	dir := getDir(filePath)
 	o, err := os.OpenFile(filepath.Join(dir, filename), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0664)
 	if err != nil {
 		return "", err

@@ -350,11 +350,11 @@ func prepareQueries(qMap goyesql.Queries, db *sqlx.DB, ko *koanf.Koanf) *models.
 }
 
 // initSettings loads settings from the DB into the given Koanf map.
-func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf) {
+func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf, authID string) error {
 	var s types.JSONText
 
-	log.Println("auth_id", ko.String("app.auth_id"))
-	if err := db.Get(&s, query, ko.String("app.auth_id")); err != nil {
+	log.Println("auth_id", authID)
+	if err := db.Get(&s, query, authID); err != nil {
 		msg := err.Error()
 		if err, ok := err.(*pq.Error); ok {
 			if err.Detail != "" {
@@ -366,7 +366,7 @@ func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf) {
 	}
 
 	if len(s) == 0 {
-		lo.Fatalf("error: settings retrieved from DB are empty")
+		return fmt.Errorf("error: settings retrieved from DB are empty for %s", authID)
 	}
 
 	// Setting keys are dot separated, eg: app.favicon_url. Unflatten them into
@@ -378,6 +378,7 @@ func initSettings(query string, db *sqlx.DB, ko *koanf.Koanf) {
 	if err := ko.Load(confmap.Provider(out, "."), nil); err != nil {
 		lo.Fatalf("error parsing settings from DB: %v", err)
 	}
+	return nil
 }
 
 func initConstants() *constants {
@@ -601,13 +602,11 @@ func initPostbackMessengers(m *manager.Manager) []manager.Messenger {
 }
 
 // initMediaStore initializes Upload manager with a custom backend.
-func initMediaStore() media.Store {
-	switch provider := ko.String("upload.provider"); provider {
+func initMediaStore(upload_provider string, uploadData map[string]interface{}) media.Store {
+	switch upload_provider {
 	case "s3":
-		var o s3.Opt
-		ko.Unmarshal("upload.s3", &o)
-
-		up, err := s3.NewS3Store(o)
+		opts := parseS3Opts(uploadData)
+		up, err := s3.NewS3Store(opts)
 		if err != nil {
 			lo.Fatalf("error initializing s3 upload provider %s", err)
 		}
@@ -615,13 +614,10 @@ func initMediaStore() media.Store {
 		return up
 
 	case "filesystem":
-		var o filesystem.Opts
-
-		ko.Unmarshal("upload.filesystem", &o)
-		o.RootURL = ko.String("app.root_url")
-		o.UploadPath = filepath.Clean(o.UploadPath)
-		o.UploadURI = filepath.Clean(o.UploadURI)
-		up, err := filesystem.New(o)
+		opts := parseFileSystemOpts(uploadData)
+		opts.UploadPath = filepath.Clean(opts.UploadPath)
+		opts.UploadURI = filepath.Clean(opts.UploadURI)
+		up, err := filesystem.New(opts)
 		if err != nil {
 			lo.Fatalf("error initializing filesystem upload provider %s", err)
 		}

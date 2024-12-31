@@ -71,6 +71,7 @@ type Queries struct {
 	GetCampaignStats             *sqlx.Stmt `query:"get-campaign-stats"`
 	GetCampaignStatus            *sqlx.Stmt `query:"get-campaign-status"`
 	GetArchivedCampaigns         *sqlx.Stmt `query:"get-archived-campaigns"`
+	GetCampaignReport            string     `query:"get-campaign-report"`
 
 	// These two queries are read as strings and based on settings.individual_tracking=on/off,
 	// are interpolated and copied to view and click counts. Same query, different tables.
@@ -91,11 +92,17 @@ type Queries struct {
 	UpdateCampaignArchive    *sqlx.Stmt `query:"update-campaign-archive"`
 	RegisterCampaignView     *sqlx.Stmt `query:"register-campaign-view"`
 	DeleteCampaign           *sqlx.Stmt `query:"delete-campaign"`
+	GetMessengerByAuthID     *sqlx.Stmt `query:"get-messenger-by-authid"`
 
-	InsertMedia *sqlx.Stmt `query:"insert-media"`
-	GetMedia    *sqlx.Stmt `query:"get-media"`
-	QueryMedia  *sqlx.Stmt `query:"query-media"`
-	DeleteMedia *sqlx.Stmt `query:"delete-media"`
+	InsertMedia             *sqlx.Stmt `query:"insert-media"`
+	GetMedia                *sqlx.Stmt `query:"get-media"`
+	QueryMedia              *sqlx.Stmt `query:"query-media"`
+	DeleteMedia             *sqlx.Stmt `query:"delete-media"`
+	GetExtensions           *sqlx.Stmt `query:"get-extensions"`
+	GetFilePath             *sqlx.Stmt `query:"get-file-path"`
+	GetUploadProvider       *sqlx.Stmt `query:"get-upload-provider"`
+	GetS3UploadData         *sqlx.Stmt `query:"get-s3-upload-data"`
+	GetFileSystemUploadData *sqlx.Stmt `query:"get-file-system-upload-data"`
 
 	CreateTemplate      *sqlx.Stmt `query:"create-template"`
 	GetTemplates        *sqlx.Stmt `query:"get-templates"`

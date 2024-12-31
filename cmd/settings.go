@@ -317,7 +317,7 @@ func handleTestSMTPSettings(c echo.Context) error {
 	m.To = []string{to}
 	m.Subject = app.i18n.T("settings.smtp.testConnection")
 	m.Body = b.Bytes()
-	if err := msgr.Push(m); err != nil {
+	if err := msgr.Push(m, ""); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 

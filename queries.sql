@@ -632,7 +632,7 @@ ORDER BY %order% OFFSET $5 LIMIT (CASE WHEN $6 < 1 THEN NULL ELSE $6 END);
 -- name: get-campaign-authid
 SELECT campaigns.*
 FROM campaigns
-WHERE  campaigns.authid = $1;
+WHERE  campaigns.authid = $1 ORDER BY campaigns.created_at DESC;
 
 
 -- name: get-campaign
@@ -823,7 +823,7 @@ WITH intval AS (
 )
 SELECT campaign_id, COUNT(*) AS "count", DATE_TRUNC((SELECT * FROM intval), created_at) AS "timestamp"
     FROM bounces
-    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3
+    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3 AND authid = $4
     GROUP BY campaign_id, "timestamp" ORDER BY "timestamp" ASC;
 
 -- name: get-campaign-link-counts
@@ -971,6 +971,49 @@ UPDATE campaigns SET
 -- name: delete-campaign
 DELETE FROM campaigns WHERE id=$1 AND authid = $2;
 
+-- name: get-campaign-report
+SELECT
+    campaigns.*,
+    COALESCE(templates.body,
+        (SELECT body FROM templates WHERE is_default = true LIMIT 1)
+    ) AS template_body,
+    COALESCE(( 
+        SELECT COUNT(*) FROM campaign_views
+        WHERE campaign_views.campaign_id = campaigns.id AND campaign_views.authid = campaigns.authid
+    ), 0) AS views,
+    COALESCE(( 
+        SELECT COUNT(campaign_id) FROM link_clicks
+        WHERE link_clicks.campaign_id = campaigns.id AND link_clicks.authid = campaigns.authid
+    ), 0) AS clicks,
+    COALESCE(( 
+        SELECT COUNT(campaign_id) FROM bounces
+        WHERE bounces.campaign_id = campaigns.id AND bounces.authid = campaigns.authid
+    ), 0) AS bounces,
+    (SELECT json_agg(
+        json_build_object(
+            'list', lists.*,
+            'subscriber_count', 
+            (SELECT COUNT(*) 
+             FROM subscriber_lists
+             WHERE subscriber_lists.list_id = lists.id)
+        )
+    )
+     FROM lists 
+     JOIN campaign_lists ON campaign_lists.list_id = lists.id 
+     WHERE campaign_lists.campaign_id = campaigns.id AND campaign_lists.authid = campaigns.authid
+    ) AS lists,
+    (SELECT json_agg(media) FROM media
+        JOIN campaign_media ON campaign_media.media_id = media.id 
+        WHERE campaign_media.campaign_id = campaigns.id AND campaign_media.authid = campaigns.authid
+    ) AS media
+FROM campaigns
+LEFT JOIN templates ON templates.id = campaigns.template_id
+WHERE ($1::int[] IS NULL OR array_length($1::int[], 1) = 0 OR campaigns.id = ANY($1::int[]))
+AND campaigns.authid = $2 AND (NULLIF($3, '') IS NULL OR campaigns.status = $3::campaign_status) 
+AND ($4::timestamp IS NULL OR campaigns.created_at >= $4) AND ($5::timestamp IS NULL OR campaigns.created_at < $5)
+ORDER BY %order%;
+
+
 -- name: register-campaign-view
 WITH view AS (
     SELECT campaigns.id as campaign_id, campaigns.authid as campaign_authid, subscribers.id AS subscriber_id FROM campaigns
@@ -1060,6 +1103,22 @@ SELECT * FROM media WHERE (CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END)  AN
 
 -- name: delete-media
 DELETE FROM media WHERE id=$1 AND authid=$2;
+
+-- name: get-extensions
+SELECT jsonb_array_elements_text(value) FROM settings WHERE key = 'upload.extensions' AND authid = $1;
+
+-- name: get-file-path
+SELECT value FROM settings WHERE key = 'upload.filesystem.upload_path' AND authid = $1;
+
+-- name: get-upload-provider
+SELECT value FROM settings WHERE key = 'upload.provider' AND authid = $1;
+
+-- name: get-s3-upload-data
+SELECT key, value FROM settings WHERE key LIKE 'upload.s3.%' AND authid = $1;
+
+-- name: get-file-system-upload-data
+SELECT key, value FROM settings 
+WHERE key IN ('upload.filesystem.upload_path', 'upload.filesystem.upload_uri', 'app.root_url') AND authid = $1;
 
 -- links
 -- name: create-link
@@ -1214,3 +1273,7 @@ DELETE FROM bounces WHERE subscriber_id = (SELECT id FROM sub);
 -- name: get-db-info
 SELECT JSON_BUILD_OBJECT('version', (SELECT VERSION()),
                         'size_mb', (SELECT ROUND(pg_database_size((SELECT CURRENT_DATABASE()))/(1024^2)))) AS info;
+
+-- name: get-messenger-by-authid
+SELECT (messenger->>'root_url') AS fax_billing_root_url FROM settings, jsonb_array_elements(value::jsonb) AS messenger
+WHERE key = 'messengers' AND messenger->>'name' = $2 AND authid = $1;

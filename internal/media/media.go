@@ -26,7 +26,7 @@ type Media struct {
 
 // Store represents functions to store and retrieve media (files).
 type Store interface {
-	Put(string, string, io.ReadSeeker) (string, error)
+	Put(string, string, io.ReadSeeker, string) (string, error)
 	Delete(string) error
 	GetURL(string) string
 	GetBlob(string) ([]byte, error)

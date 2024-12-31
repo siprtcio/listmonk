@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/knadh/listmonk/logger"
 	"github.com/knadh/listmonk/models"
 	"github.com/labstack/echo/v4"
 	"github.com/lib/pq"
@@ -52,6 +53,22 @@ var (
 	regexFromAddress = regexp.MustCompile(`((.+?)\s)?<(.+?)@(.+?)>`)
 	regexSlug        = regexp.MustCompile(`[^\p{L}\p{M}\p{N}]`)
 )
+
+func initializeSettings(app *App, authID string) error {
+	err := initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	if err != nil {
+		return fmt.Errorf("fetching settings : %w", err)
+	}
+	app.manager = initCampaignManager(app.queries, app.constants, app)
+	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	for _, m := range initPostbackMessengers(app.manager) {
+		app.messengers[m.Name()] = m
+	}
+	for _, m := range app.messengers {
+		app.manager.AddMessenger(m)
+	}
+	return nil
+}
 
 // handleGetCampaigns handles retrieval of campaigns.
 func handleGetCampaigns(c echo.Context) error {
@@ -174,6 +191,9 @@ func handlePreviewCampaign(c echo.Context) error {
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 
 	camp, err := app.core.GetCampaignForPreview(id, tplID, authID)
 	if err != nil {
@@ -254,6 +274,10 @@ func handleCreateCampaign(c echo.Context) error {
 
 	if authID == "" {
 		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
 	}
 
 	if err := c.Bind(&o); err != nil {
@@ -367,6 +391,10 @@ func handleUpdateCampaign(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("campaigns.cantUpdate"))
 	}
 
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
+
 	// Read the incoming params into the existing campaign fields from the DB.
 	// This allows updating of values that have been sent whereas fields
 	// that are not in the request retain the old values.
@@ -416,6 +444,29 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	uploadProvider, err := app.core.GetUploadProvider(authID)
+	if err != nil {
+		return err
+	}
+	var uploadData map[string]interface{}
+	if uploadProvider == "filesystem" {
+		uploadData, err = app.core.GetFileSystemUploadData(authID)
+		if err != nil {
+			return err
+		}
+	} else {
+		uploadData, err = app.core.GetS3UploadData(authID)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
+	app.media = initMediaStore(uploadProvider, uploadData)
+
+	go app.manager.Run()
 
 	if o.Status == models.CampaignStatusPaused || o.Status == models.CampaignStatusCancelled {
 		app.manager.StopCampaign(id)
@@ -548,7 +599,9 @@ func handleTestCampaign(c echo.Context) error {
 	if campID < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.errorID"))
 	}
-
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 	// Get and validate fields.
 	if err := c.Bind(&req); err != nil {
 		return err
@@ -786,4 +839,70 @@ func makeOptinCampaignMessage(o campaignReq, app *App) (campaignReq, error) {
 
 	o.Body = b.String()
 	return o, nil
+}
+
+// GetCampaignReport retrieves the campaign reports.
+// If IDs are provided then, those specific campaign reports are returned, otherwise all campaign reports are returned.
+func handleGetCampaignsReport(c echo.Context) error {
+	var (
+		app     = c.Get("app").(*App)
+		orderBy = c.FormValue("order_by")
+		order   = c.FormValue("order")
+		status  = c.FormValue("status")
+	)
+
+	campaignIDs, err := getQueryInts("campaign_id", c.QueryParams())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
+	}
+
+	authID := c.Request().Header.Get("X-Auth-ID")
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	fromDate := c.QueryParam("from_date")
+	toDate := c.QueryParam("to_date")
+	if fromDate != "" || toDate != "" {
+		RFC3339dateLayout := "2006-01-02"
+		fromdate, err := time.Parse(RFC3339dateLayout, fromDate)
+
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Please validate from date"})
+		}
+
+		todate, err := time.Parse(RFC3339dateLayout, toDate)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Please validate to date"})
+		}
+
+		now := time.Now()
+		if fromdate.After(now) || todate.After(now) {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Dates cannot be in the future"})
+		}
+
+		if fromdate.After(todate) {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "To date should be after the from date. Please validate from & to date"})
+		}
+	}
+
+	logger.Debug("campaign report request", logger.LogFields{
+		"authID":      authID,
+		"campaignIDs": campaignIDs,
+		"order":       order,
+		"orderBy":     orderBy,
+		"status":      status,
+		"fromDate":    fromDate,
+		"toDate":      toDate,
+	})
+	campaigns, err := app.core.GetCampaignReport(campaignIDs, authID, order, orderBy, status, fromDate, toDate)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"campaigns": campaigns,
+		"total":     len(campaigns),
+	})
+
 }

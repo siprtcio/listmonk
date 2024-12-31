@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gofrs/uuid/v5"
 	"github.com/knadh/listmonk/internal/media"
@@ -102,4 +103,122 @@ func (c *Core) DeleteMedia(id int, authID string) error {
 	}
 
 	return nil
+}
+func (c *Core) GetExtensions(authID string) ([]string, error) {
+
+	var out []string
+	if err := c.q.GetExtensions.Select(&out, authID); err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.media}", "error", pqErrMsg(err)))
+	}
+
+	return out, nil
+}
+func (c *Core) GetFilePath(authID string) (string, error) {
+
+	var out string
+	if err := c.q.GetFilePath.Get(&out, authID); err != nil {
+		if len(out) == 0 {
+			return "", echo.NewHTTPError(http.StatusBadRequest,
+				c.i18n.Ts("globals.messages.notFound", "name",
+					fmt.Sprintf("{globals.terms.media}")))
+		}
+		return "", echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.media}", "error", pqErrMsg(err)))
+	}
+
+	return out, nil
+}
+func (c *Core) GetUploadProvider(authID string) (string, error) {
+
+	var upload_provider string
+	if err := c.q.GetUploadProvider.Get(&upload_provider, authID); err != nil {
+		if len(upload_provider) == 0 {
+			return "", echo.NewHTTPError(http.StatusBadRequest,
+				c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.media}"))
+		}
+		return "", echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.media}", "error", pqErrMsg(err)))
+	}
+	upload_provider = strings.Trim(upload_provider, "\"")
+	upload_provider = strings.TrimSpace(upload_provider)
+
+	return upload_provider, nil
+}
+
+func (c *Core) GetS3UploadData(authID string) (map[string]interface{}, error) {
+	opts := make(map[string]interface{})
+
+	var rows []struct {
+		Key   string `db:"key"`
+		Value string `db:"value"`
+	}
+
+	if err := c.q.GetS3UploadData.Select(&rows, authID); err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.media}", "error", pqErrMsg(err)))
+	}
+
+	for _, row := range rows {
+		// Trim surrounding quotes if they exist
+		trimmedValue := strings.Trim(row.Value, "\"")
+
+		switch row.Key {
+		case "upload.s3.url":
+			opts["url"] = trimmedValue
+		case "upload.s3.public_url":
+			opts["public_url"] = trimmedValue
+		case "upload.s3.aws_access_key_id":
+			opts["aws_access_key_id"] = trimmedValue
+		case "upload.s3.aws_secret_access_key":
+			opts["aws_secret_access_key"] = trimmedValue
+		case "upload.s3.aws_default_region":
+			opts["aws_default_region"] = trimmedValue
+		case "upload.s3.bucket":
+			opts["bucket"] = trimmedValue
+		case "upload.s3.bucket_path":
+			opts["bucket_path"] = trimmedValue
+		case "upload.s3.bucket_type":
+			opts["bucket_type"] = trimmedValue
+		case "upload.s3.expiry":
+			if expiry, err := time.ParseDuration(row.Value); err == nil {
+				opts["expiry"] = expiry
+			} else {
+				opts["expiry"] = row.Value
+			}
+		}
+	}
+
+	return opts, nil
+}
+
+func (c *Core) GetFileSystemUploadData(authID string) (map[string]interface{}, error) {
+	opts := make(map[string]interface{})
+
+	var rows []struct {
+		Key   string `db:"key"`
+		Value string `db:"value"`
+	}
+
+	// Execute the query and fetch all matching rows
+	err := c.q.GetFileSystemUploadData.Select(&rows, authID)
+	if err != nil {
+		return nil, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.media}", "error", pqErrMsg(err)))
+	}
+
+	// Iterate over the rows and map them to the appropriate keys in the 'opts' map
+	for _, row := range rows {
+		trimmedValue := strings.Trim(row.Value, "\"")
+		switch row.Key {
+		case "upload.filesystem.upload_path":
+			opts["upload_path"] = trimmedValue
+		case "upload.filesystem.upload_uri":
+			opts["upload_uri"] = trimmedValue
+		case "app.root_url":
+			opts["root_url"] = trimmedValue
+		}
+	}
+
+	return opts, nil
 }
