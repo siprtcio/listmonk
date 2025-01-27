@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -61,6 +62,7 @@ func initializeSettings(app *App, authID string) error {
 	}
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	log.Println("Calling postback messengers")
 	for _, m := range initPostbackMessengers(app.manager) {
 		app.messengers[m.Name()] = m
 	}

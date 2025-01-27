@@ -568,6 +568,7 @@ func initSMTPMessenger(m *manager.Manager) manager.Messenger {
 // initPostbackMessengers initializes and returns all the enabled
 // HTTP postback messenger backends.
 func initPostbackMessengers(m *manager.Manager) []manager.Messenger {
+	lo.Printf("called Postback messenger")
 	items := ko.Slices("messengers")
 	if len(items) == 0 {
 		return nil
