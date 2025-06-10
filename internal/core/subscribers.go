@@ -310,14 +310,26 @@ func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs 
 		pq.Array(listUUIDs),
 		subStatus,
 		sub.AuthID); err != nil {
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "idx_subs_email_authid" {
-			return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
-		} else {
-			// return sub.Subscriber, errSubscriberExists
-			c.log.Printf("error inserting subscriber: %v", err)
-			return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
-				c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+		if pqErr, ok := err.(*pq.Error); ok {
+			switch pqErr.Constraint {
+			case "idx_subs_email_authid":
+				return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+			case "idx_subs_number_authid":
+				return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, "number already exists")
+			default:
+				c.log.Printf("error inserting subscriber: %v", err)
+				return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+					c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+			}
 		}
+		// if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "idx_subs_email_authid" {
+		// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+		// } else {
+		// 	// return sub.Subscriber, errSubscriberExists
+		// 	c.log.Printf("error inserting subscriber: %v", err)
+		// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+		// 		c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+		// }
 	}
 
 	// Fetch the subscriber's full data. If the subscriber already existed and wasn't
@@ -408,13 +420,25 @@ func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs 
 		sub.AuthID)
 	if err != nil {
 		c.log.Printf("error updating subscriber: %v", err)
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "idx_subs_email_authid" {
-			return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
-		} else {
-			c.log.Printf("error updating subscriber: %v", err)
-			return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
-				c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+		if pqErr, ok := err.(*pq.Error); ok {
+			switch pqErr.Constraint {
+			case "idx_subs_email_authid":
+				return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+			case "idx_subs_number_authid":
+				return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, "number already exists")
+			default:
+				c.log.Printf("error inserting subscriber: %v", err)
+				return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+					c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+			}
 		}
+		// if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "idx_subs_email_authid" {
+		// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+		// } else {
+		// 	c.log.Printf("error updating subscriber: %v", err)
+		// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+		// 		c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+		// }
 	}
 
 	out, err := c.GetSubscriber(sub.ID, "", sub.Email, sub.AuthID)

@@ -632,15 +632,31 @@ func (im *Importer) SanitizeEmail(email string) (string, error) {
 
 // ValidateFields validates incoming subscriber field values and returns sanitized fields.
 func (im *Importer) ValidateFields(s SubReq) (SubReq, error) {
-	if len(s.Email) > 1000 {
-		return s, errors.New(im.i18n.T("subscribers.invalidEmail"))
+	s.Email = strings.TrimSpace(s.Email)
+	var number string
+
+	if len(s.Attribs) > 0 {
+		if n, ok := s.Attribs["number"].(string); ok {
+			number = strings.TrimSpace(n)
+			s.Attribs["number"] = number // store trimmed version back
+		}
 	}
 
-	em, err := im.SanitizeEmail(s.Email)
-	if err != nil {
-		return s, err
+	if s.Email == "" && number == "" {
+		return s, errors.New("either email or number is required")
 	}
-	s.Email = strings.ToLower(em)
+
+	if s.Email != "" {
+		if len(s.Email) > 1000 {
+			return s, errors.New(im.i18n.T("subscribers.invalidEmail"))
+		}
+
+		em, err := im.SanitizeEmail(s.Email)
+		if err != nil {
+			return s, err
+		}
+		s.Email = strings.ToLower(em)
+	}
 
 	// If there's no name, use the name part of the e-mail.
 	s.Name = strings.TrimSpace(s.Name)
@@ -657,7 +673,7 @@ func (im *Importer) ValidateFields(s SubReq) (SubReq, error) {
 
 	if len(s.Attribs) > 0 {
 		if number, ok := s.Attribs["number"].(string); ok {
-			phoneRegex := `^\+?\d{7,15}$`
+			phoneRegex := `^$|^\+?\d{7,15}$`
 			re := regexp.MustCompile(phoneRegex)
 			if !re.MatchString(number) {
 				return s, errors.New("invalid number")
