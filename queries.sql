@@ -2,20 +2,29 @@
 -- subscribers
 -- name: get-subscriber
 -- Get a single subscriber by id or UUID or email.
-SELECT * FROM subscribers WHERE
-    CASE
-        WHEN $1 > 0 THEN id = $1
-        WHEN $2 != '' THEN uuid = $2::UUID
-        WHEN $3 != '' THEN email = $3
-    END;
+SELECT * FROM subscribers WHERE 
+    ( 
+        ($1 > 0 AND id = $1) OR 
+        ($2 != '' AND uuid = $2::UUID) OR 
+        ($3 != '' AND email = $3)
+    ) 
+    AND authid = $4;
+
+--name: get-subscriber-authid
+SELECT * 
+FROM subscribers 
+WHERE authid = $1;
+
+-- name: check-subscriber-authid
+SELECT COUNT(*) AS total FROM subscribers WHERE authid = $1 AND id = ANY($2::int[])
 
 -- name: get-subscribers-by-emails
 -- Get subscribers by emails.
-SELECT * FROM subscribers WHERE email=ANY($1);
+SELECT * FROM subscribers WHERE email=ANY($1) AND authid = $2;
 
 -- name: get-subscriber-lists
 WITH sub AS (
-    SELECT id FROM subscribers WHERE CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END
+    SELECT id FROM subscribers WHERE (CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END) AND authid = $7
 )
 SELECT * FROM lists
     LEFT JOIN subscriber_lists ON (lists.id = subscriber_lists.list_id)
@@ -27,6 +36,7 @@ SELECT * FROM lists
     END)
     AND (CASE WHEN $5 != '' THEN subscriber_lists.status = $5::subscription_status ELSE TRUE END)
     AND (CASE WHEN $6 != '' THEN lists.optin = $6::list_optin ELSE TRUE END)
+    AND lists.authid = $7
     ORDER BY id;
 
 -- name: get-subscriber-lists-lazy
@@ -63,7 +73,7 @@ SELECT id as subscriber_id,
 -- if $3 is set to true, all lists are fetched including the subscriber's subscriptions.
 -- subscription_status, and subscription_created_at are null in that case.
 WITH sub AS (
-    SELECT id FROM subscribers WHERE CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END
+    SELECT id FROM subscribers WHERE (CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END) AND authid = $4 
 )
 SELECT lists.*,
     subscriber_lists.status as subscription_status,
@@ -71,26 +81,27 @@ SELECT lists.*,
     subscriber_lists.meta as subscription_meta
     FROM lists LEFT JOIN subscriber_lists
     ON (subscriber_lists.list_id = lists.id AND subscriber_lists.subscriber_id = (SELECT id FROM sub))
-    WHERE CASE WHEN $3 = TRUE THEN TRUE ELSE subscriber_lists.status IS NOT NULL END
+    WHERE (CASE WHEN $3 = TRUE THEN TRUE ELSE subscriber_lists.status IS NOT NULL END)
     ORDER BY subscriber_lists.status;
 
 -- name: insert-subscriber
 WITH sub AS (
-    INSERT INTO subscribers (uuid, email, name, status, attribs)
-    VALUES($1, $2, $3, $4, $5)
-    RETURNING id, status
+    INSERT INTO subscribers (uuid, email, name, status, attribs, authid)
+    VALUES($1, $2, $3, $4, $5,$9)
+    RETURNING id, status, authid
 ),
 listIDs AS (
-    SELECT id FROM lists WHERE
+    SELECT id FROM lists WHERE authid = $9 AND
         (CASE WHEN CARDINALITY($6::INT[]) > 0 THEN id=ANY($6)
               ELSE uuid=ANY($7::UUID[]) END)
 ),
 subs AS (
-    INSERT INTO subscriber_lists (subscriber_id, list_id, status)
+    INSERT INTO subscriber_lists (subscriber_id, list_id, status, authid)
     VALUES(
         (SELECT id FROM sub),
         UNNEST(ARRAY(SELECT id FROM listIDs)),
-        (CASE WHEN $4='blocklisted' THEN 'unsubscribed'::subscription_status ELSE $8::subscription_status END)
+        (CASE WHEN $4='blocklisted' THEN 'unsubscribed'::subscription_status ELSE $8::subscription_status END),
+        (SELECT authid FROM sub)
     )
     ON CONFLICT (subscriber_id, list_id) DO UPDATE
         SET updated_at=NOW(),
@@ -106,9 +117,9 @@ SELECT id from sub;
 -- Upserts a subscriber where existing subscribers get their names and attributes overwritten.
 -- If $7 = true, update values, otherwise, skip.
 WITH sub AS (
-    INSERT INTO subscribers as s (uuid, email, name, attribs, status)
-    VALUES($1, $2, $3, $4, 'enabled')
-    ON CONFLICT (email)
+    INSERT INTO subscribers as s (uuid, email, authid, name, attribs, status)
+    VALUES($1, $2, $8, $3, $4, 'enabled')
+    ON CONFLICT (LOWER(email), authid)
     DO UPDATE SET
         name=(CASE WHEN $7 THEN $3 ELSE s.name END),
         attribs=(CASE WHEN $7 THEN $4 ELSE s.attribs END),
@@ -116,8 +127,8 @@ WITH sub AS (
     RETURNING uuid, id
 ),
 subs AS (
-    INSERT INTO subscriber_lists (subscriber_id, list_id, status)
-    VALUES((SELECT id FROM sub), UNNEST($5::INT[]), $6)
+    INSERT INTO subscriber_lists (subscriber_id, list_id, status, authid)
+    VALUES((SELECT id FROM sub), UNNEST($5::INT[]), $6, $8)
     ON CONFLICT (subscriber_id, list_id) DO UPDATE
     SET updated_at=NOW(), status=(CASE WHEN $7 THEN $6 ELSE subscriber_lists.status END)
 )
@@ -129,9 +140,9 @@ SELECT uuid, id from sub;
 -- existing subscriptions are marked as 'unsubscribed'.
 -- This is used in the bulk importer.
 WITH sub AS (
-    INSERT INTO subscribers (uuid, email, name, attribs, status)
-    VALUES($1, $2, $3, $4, 'blocklisted')
-    ON CONFLICT (email) DO UPDATE SET status='blocklisted', updated_at=NOW()
+    INSERT INTO subscribers (uuid, email, authid, name, attribs, status)
+    VALUES($1, $2, $5, $3, $4, 'blocklisted')
+    ON CONFLICT (authid, email) DO UPDATE SET status='blocklisted', updated_at=NOW()
     RETURNING id
 )
 UPDATE subscriber_lists SET status='unsubscribed', updated_at=NOW()
@@ -144,7 +155,7 @@ UPDATE subscribers SET
     status=(CASE WHEN $4 != '' THEN $4::subscriber_status ELSE status END),
     attribs=(CASE WHEN $5 != '' THEN $5::JSONB ELSE attribs END),
     updated_at=NOW()
-WHERE id = $1;
+WHERE id = $1 AND authid = $6;
 
 -- name: update-subscriber-with-lists
 -- Updates a subscriber's data, and given a list of list_ids, inserts subscriptions
@@ -156,21 +167,23 @@ WITH s AS (
         status=(CASE WHEN $4 != '' THEN $4::subscriber_status ELSE status END),
         attribs=(CASE WHEN $5 != '' THEN $5::JSONB ELSE attribs END),
         updated_at=NOW()
-    WHERE id = $1 RETURNING id
+    WHERE id = $1 AND authid = $10 
+    RETURNING id, authid
 ),
 listIDs AS (
-    SELECT id FROM lists WHERE
+    SELECT id FROM lists WHERE authid = $10 AND
         (CASE WHEN CARDINALITY($6::INT[]) > 0 THEN id=ANY($6)
               ELSE uuid=ANY($7::UUID[]) END)
 ),
 d AS (
     DELETE FROM subscriber_lists WHERE $9 = TRUE AND subscriber_id = $1 AND list_id != ALL(SELECT id FROM listIDs)
 )
-INSERT INTO subscriber_lists (subscriber_id, list_id, status)
+INSERT INTO subscriber_lists (subscriber_id, list_id, status, authid)
     VALUES(
         (SELECT id FROM s),
         UNNEST(ARRAY(SELECT id FROM listIDs)),
-        (CASE WHEN $4='blocklisted' THEN 'unsubscribed'::subscription_status ELSE $8::subscription_status END)
+        (CASE WHEN $4='blocklisted' THEN 'unsubscribed'::subscription_status ELSE $8::subscription_status END),
+        (SELECT authid FROM s)
     )
     ON CONFLICT (subscriber_id, list_id) DO UPDATE
     SET status = (
@@ -185,41 +198,51 @@ INSERT INTO subscriber_lists (subscriber_id, list_id, status)
 
 -- name: delete-subscribers
 -- Delete one or more subscribers by ID or UUID.
-DELETE FROM subscribers WHERE CASE WHEN ARRAY_LENGTH($1::INT[], 1) > 0 THEN id = ANY($1) ELSE uuid = ANY($2::UUID[]) END;
+DELETE FROM subscribers 
+WHERE 
+    CASE 
+        WHEN ARRAY_LENGTH($1::INT[], 1) > 0 THEN id = ANY($1) 
+        ELSE uuid = ANY($2::UUID[]) 
+    END
+    AND authid = $3;  -- Filter by authid
 
 -- name: delete-blocklisted-subscribers
-DELETE FROM subscribers WHERE status = 'blocklisted';
+DELETE FROM subscribers WHERE status = 'blocklisted' AND authid = $1;
 
 -- name: delete-orphan-subscribers
 DELETE FROM subscribers a WHERE NOT EXISTS
-    (SELECT 1 FROM subscriber_lists b WHERE b.subscriber_id = a.id);
+    (SELECT 1 FROM subscriber_lists b WHERE b.subscriber_id = a.id)
+    AND a.authid = $1;
 
 -- name: blocklist-subscribers
 WITH b AS (
     UPDATE subscribers SET status='blocklisted', updated_at=NOW()
-    WHERE id = ANY($1::INT[])
+    WHERE id = ANY($1::INT[]) AND authid = $2
 )
 UPDATE subscriber_lists SET status='unsubscribed', updated_at=NOW()
-    WHERE subscriber_id = ANY($1::INT[]);
+    WHERE subscriber_id = ANY($1::INT[]) AND authid = $2;
 
 -- name: add-subscribers-to-lists
-INSERT INTO subscriber_lists (subscriber_id, list_id, status)
-    (SELECT a, b, (CASE WHEN $3 != '' THEN $3::subscription_status ELSE 'unconfirmed' END) FROM UNNEST($1::INT[]) a, UNNEST($2::INT[]) b)
+INSERT INTO subscriber_lists (subscriber_id, list_id, status, authid)
+    (SELECT a, b, (CASE WHEN $3 != '' THEN $3::subscription_status ELSE 'unconfirmed' END), $4 FROM UNNEST($1::INT[]) a, UNNEST($2::INT[]) b)
     ON CONFLICT (subscriber_id, list_id) DO UPDATE SET status=(CASE WHEN $3 != '' THEN $3::subscription_status ELSE subscriber_lists.status END);
 
 -- name: delete-subscriptions
 DELETE FROM subscriber_lists
-    WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST($1::INT[]) a, UNNEST($2::INT[]) b);
+WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST($1::INT[]) a, UNNEST($2::INT[]) b)
+AND subscriber_id IN (
+    SELECT id FROM subscribers WHERE authid = $3
+);
 
 -- name: confirm-subscription-optin
 WITH subID AS (
-    SELECT id FROM subscribers WHERE uuid = $1::UUID
+    SELECT id FROM subscribers WHERE uuid = $1::UUID AND authid = $4 
 ),
 listIDs AS (
-    SELECT id FROM lists WHERE uuid = ANY($2::UUID[])
+    SELECT id FROM lists WHERE uuid = ANY($2::UUID[]) AND authid = $4 
 )
 UPDATE subscriber_lists SET status='confirmed', meta=meta || $3, updated_at=NOW()
-    WHERE subscriber_id = (SELECT id FROM subID) AND list_id = ANY(SELECT id FROM listIDs);
+    WHERE subscriber_id = (SELECT id FROM subID) AND list_id = ANY(SELECT id FROM listIDs) AND authid = $4 ;
 
 -- name: unsubscribe-subscribers-from-lists
 WITH listIDs AS (
@@ -229,7 +252,10 @@ WITH listIDs AS (
     ) id
 )
 UPDATE subscriber_lists SET status='unsubscribed', updated_at=NOW()
-    WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST($1::INT[]) a, UNNEST((SELECT id FROM listIDs)) b);
+    WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST($1::INT[]) a, UNNEST((SELECT id FROM listIDs)) b)
+    AND subscriber_id IN (
+    SELECT id FROM subscribers WHERE authid = $4
+);
 
 -- name: unsubscribe-by-campaign
 -- Unsubscribes a subscriber given a campaign UUID (from all the lists in the campaign) and the subscriber UUID.
@@ -238,14 +264,16 @@ UPDATE subscriber_lists SET status='unsubscribed', updated_at=NOW()
 WITH lists AS (
     SELECT list_id FROM campaign_lists
     LEFT JOIN campaigns ON (campaign_lists.campaign_id = campaigns.id)
-    WHERE campaigns.uuid = $1
+    WHERE campaigns.uuid = $1 AND campaigns.authid = $4
 ),
 sub AS (
     UPDATE subscribers SET status = (CASE WHEN $3 IS TRUE THEN 'blocklisted' ELSE status END)
-    WHERE uuid = $2 RETURNING id
+    WHERE uuid = $2  AND authid = $4 RETURNING id
 )
 UPDATE subscriber_lists SET status = 'unsubscribed', updated_at=NOW() WHERE
-    subscriber_id = (SELECT id FROM sub) AND status != 'unsubscribed' AND
+    subscriber_id = (SELECT id FROM sub) AND status != 'unsubscribed'
+     AND subscriber_lists.authid = $4
+     AND
     -- If $3 is false, unsubscribe from the campaign's lists, otherwise all lists.
     CASE WHEN $3 IS FALSE THEN list_id = ANY(SELECT list_id FROM lists) ELSE list_id != 0 END;
 
@@ -254,13 +282,13 @@ WITH optins AS (
     SELECT id FROM lists WHERE optin = 'double'
 )
 DELETE FROM subscriber_lists
-    WHERE status = 'unconfirmed' AND list_id IN (SELECT id FROM optins) AND created_at < $1;
+    WHERE status = 'unconfirmed' AND list_id IN (SELECT id FROM optins) AND created_at < $1 AND authid = $2;
 
 -- privacy
 -- name: export-subscriber-data
 WITH prof AS (
-    SELECT id, uuid, email, name, attribs, status, created_at, updated_at FROM subscribers WHERE
-    CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END
+    SELECT id, uuid, email, name, attribs, status, created_at, updated_at, authid FROM subscribers WHERE
+    (CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END)  AND (authid = $3)
 ),
 subs AS (
     SELECT subscriber_lists.status AS subscription_status,
@@ -282,7 +310,7 @@ clicks AS (
         WHERE subscriber_id = (SELECT id FROM prof)
         GROUP BY links.id ORDER BY links.id
 )
-SELECT (SELECT email FROM prof) as email,
+SELECT COALESCE((SELECT email FROM prof), '') as email,
         COALESCE((SELECT JSON_AGG(t) FROM prof t), '{}') AS profile,
         COALESCE((SELECT JSON_AGG(t) FROM subs t), '[]') AS subscriptions,
         COALESCE((SELECT JSON_AGG(t) FROM views t), '[]') AS campaign_views,
@@ -308,12 +336,14 @@ SELECT subscribers.* FROM subscribers
         AND ($2 = '' OR subscriber_lists.status = $2::subscription_status)
     )
     WHERE (CARDINALITY($1) = 0 OR subscriber_lists.list_id = ANY($1::INT[]))
+    AND subscribers.authid = $5
     %query%
+    GROUP BY subscribers.id
     ORDER BY %order% OFFSET $3 LIMIT (CASE WHEN $4 < 1 THEN NULL ELSE $4 END);
 
 -- name: query-subscribers-count
 -- Replica of query-subscribers for obtaining the results count.
-SELECT COUNT(*) AS total FROM subscribers
+SELECT COUNT(DISTINCT subscribers.id) AS total FROM subscribers
     LEFT JOIN subscriber_lists
     ON (
         -- Optional list filtering.
@@ -321,13 +351,36 @@ SELECT COUNT(*) AS total FROM subscribers
         AND subscriber_lists.subscriber_id = subscribers.id
         AND ($2 = '' OR subscriber_lists.status = $2::subscription_status)
     )
-    WHERE (CARDINALITY($1) = 0 OR subscriber_lists.list_id = ANY($1::INT[])) %s;
+    WHERE (CARDINALITY($1) = 0 OR subscriber_lists.list_id = ANY($1::INT[])) 
+    AND subscribers.authid = $3
+    %s;
 
 -- name: query-subscribers-count-all
 -- Cached query for getting the "all" subscriber count without arbitrary conditions.
-SELECT COALESCE(SUM(subscriber_count), 0) AS total FROM mat_list_subscriber_stats
-    WHERE list_id = ANY(CASE WHEN CARDINALITY($1::INT[]) > 0 THEN $1 ELSE '{0}' END)
-    AND ($2 = '' OR status = $2::subscription_status);
+-- Query to fetch subscriber count directly from tables
+SELECT COALESCE(SUM(subscriber_count), 0) AS total
+FROM (
+    -- Count subscribers grouped by list_id and status
+    SELECT lists.id AS list_id, subscriber_lists.status, COUNT(*) AS subscriber_count
+    FROM lists
+    LEFT JOIN subscriber_lists ON subscriber_lists.list_id = lists.id
+    WHERE subscriber_lists.authid = $3
+    GROUP BY lists.id, subscriber_lists.status
+
+    UNION ALL
+
+    -- Overall subscriber count (list_id = 0)
+    SELECT 0 AS list_id, NULL AS status, COUNT(*) AS subscriber_count
+    FROM subscribers
+    WHERE subscribers.authid = $3
+) aggregated
+WHERE list_id = ANY(
+    CASE 
+        WHEN CARDINALITY($1::INT[]) > 0 THEN $1 
+        ELSE '{0}' 
+    END
+) 
+AND ($2 = '' OR status = $2::subscription_status);
 
 -- name: query-subscribers-for-export
 -- raw: true
@@ -352,6 +405,7 @@ SELECT subscribers.id,
     )
     WHERE subscriber_lists.list_id = ALL($1::INT[]) AND id > $2
     AND (CASE WHEN CARDINALITY($3::INT[]) > 0 THEN id=ANY($3) ELSE true END)
+    AND subscribers.authid = $6
     %query%
     ORDER BY subscribers.id ASC LIMIT (CASE WHEN $5 < 1 THEN NULL ELSE $5 END);
 
@@ -378,7 +432,7 @@ LIMIT (CASE WHEN $1 THEN 1 END)
 -- name: delete-subscribers-by-query
 -- raw: true
 WITH subs AS (%s)
-DELETE FROM subscribers WHERE id=ANY(SELECT id FROM subs);
+DELETE FROM subscribers WHERE id=ANY(SELECT id FROM subs) AND authid IN (SELECT authid FROM subs);
 
 -- name: blocklist-subscribers-by-query
 -- raw: true
@@ -386,6 +440,7 @@ WITH subs AS (%s),
 b AS (
     UPDATE subscribers SET status='blocklisted', updated_at=NOW()
     WHERE id = ANY(SELECT id FROM subs)
+    AND authid IN (SELECT authid FROM subs)
 )
 UPDATE subscriber_lists SET status='unsubscribed', updated_at=NOW()
     WHERE subscriber_id = ANY(SELECT id FROM subs);
@@ -394,26 +449,37 @@ UPDATE subscriber_lists SET status='unsubscribed', updated_at=NOW()
 -- raw: true
 WITH subs AS (%s)
 INSERT INTO subscriber_lists (subscriber_id, list_id, status)
-    (SELECT a, b, (CASE WHEN $5 != '' THEN $5::subscription_status ELSE 'unconfirmed' END) FROM UNNEST(ARRAY(SELECT id FROM subs)) a, UNNEST($4::INT[]) b)
+    SELECT a, b, 
+           (CASE WHEN $5 != '' THEN $5::subscription_status ELSE 'unconfirmed' END) 
+    FROM UNNEST(ARRAY(SELECT id FROM subs WHERE authid = $6)) a, 
+         UNNEST($4::INT[]) b
     ON CONFLICT (subscriber_id, list_id) DO NOTHING;
 
 -- name: delete-subscriptions-by-query
 -- raw: true
 WITH subs AS (%s)
 DELETE FROM subscriber_lists
-    WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST(ARRAY(SELECT id FROM subs)) a, UNNEST($4::INT[]) b);
+    WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST(ARRAY(SELECT id FROM subs WHERE authid = $5)) a, UNNEST($4::INT[]) b);
 
 -- name: unsubscribe-subscribers-from-lists-by-query
 -- raw: true
 WITH subs AS (%s)
 UPDATE subscriber_lists SET status='unsubscribed', updated_at=NOW()
-    WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST(ARRAY(SELECT id FROM subs)) a, UNNEST($4::INT[]) b);
+    WHERE (subscriber_id, list_id) = ANY(SELECT a, b FROM UNNEST(ARRAY(SELECT id FROM subs WHERE authid = $5)) a, UNNEST($4::INT[]) b);
 
 
 -- lists
 -- name: get-lists
-SELECT * FROM lists WHERE (CASE WHEN $1 = '' THEN 1=1 ELSE type=$1::list_type END)
+SELECT * FROM lists 
+WHERE (CASE WHEN $1 = '' THEN 1=1 ELSE type=$1::list_type END)
+    AND authid = $3
     ORDER BY CASE WHEN $2 = 'id' THEN id END, CASE WHEN $2 = 'name' THEN name END;
+
+-- name: get-lists-authid
+SELECT * FROM lists WHERE authid = $1 ORDER BY id;
+
+-- name: check-lists-authid
+SELECT COUNT(*) AS total FROM lists WHERE authid = $1 AND id = ANY($2::int[])
 
 -- name: query-lists
 WITH ls AS (
@@ -421,12 +487,14 @@ WITH ls AS (
     CASE
         WHEN $1 > 0 THEN id = $1
         WHEN $2 != '' THEN uuid = $2::UUID
-        WHEN $3 != '' THEN to_tsvector(name) @@ to_tsquery ($3)
+        WHEN $3 != '' THEN name ILIKE $3
         ELSE TRUE
     END
     AND ($4 = '' OR type = $4::list_type)
     AND ($5 = '' OR optin = $5::list_optin)
     AND (CARDINALITY($6::VARCHAR(100)[]) = 0 OR $6 <@ tags)
+    AND (authid=$9)
+    ORDER BY %order%
     OFFSET $7 LIMIT (CASE WHEN $8 < 1 THEN NULL ELSE $8 END)
 ),
 statuses AS (
@@ -446,8 +514,14 @@ SELECT * FROM lists WHERE (CASE WHEN $1 != '' THEN optin=$1::list_optin ELSE TRU
           WHEN $3::UUID[] IS NOT NULL THEN uuid = ANY($3::UUID[])
     END) ORDER BY name;
 
+-- name: check-duplicate-list
+SELECT COUNT(*) FROM lists WHERE name = $1 AND authid = $2
+
+-- name: check-duplicate-list-update
+SELECT COUNT(*) FROM lists WHERE name = $1 AND authid = $2 AND id != $3
+
 -- name: create-list
-INSERT INTO lists (uuid, name, type, optin, tags, description) VALUES($1, $2, $3, $4, $5, $6) RETURNING id;
+INSERT INTO lists (uuid, name, type, optin, tags, description, authid) VALUES($1, $2, $3, $4, $5, $6, $7) RETURNING id;
 
 -- name: update-list
 UPDATE lists SET
@@ -457,27 +531,36 @@ UPDATE lists SET
     tags=$5::VARCHAR(100)[],
     description=(CASE WHEN $6 != '' THEN $6 ELSE description END),
     updated_at=NOW()
-WHERE id = $1;
+WHERE id = $1 AND authid = $7;
 
 -- name: update-lists-date
 UPDATE lists SET updated_at=NOW() WHERE id = ANY($1);
 
 -- name: delete-lists
-DELETE FROM lists WHERE id = ALL($1);
+DELETE FROM lists WHERE id = ALL($1) AND authid = $2;
 
 
 -- campaigns
+-- name: check-insert-campaign-valid-data
+SELECT JSON_BUILD_OBJECT(
+				'duplicateCount', (SELECT COUNT(*) FROM campaigns WHERE name = $1 AND authid = $2),
+				'templateCount', (SELECT COUNT(*) FROM templates WHERE id = $3 AND authid = $2),
+                'defaultTemplate', (SELECT id FROM templates WHERE authid = $2 AND is_default IS TRUE),
+				'mediaCount', (SELECT COUNT(*) FROM media WHERE id = ANY($4::INT[]) AND authid = $2),
+                'listCount', (SELECT COUNT(*) FROM lists WHERE id = ANY($5::INT[]) AND authid = $2)
+        ) AS data;
+
 -- name: create-campaign
--- This creates the campaign and inserts campaign_lists relationships.
+-- This creates the campaign and inserts campaign_lists, campaign_media, and includes authid in all related tables.
 WITH campLists AS (
     -- Get the list_ids and their optin statuses for the campaigns found in the previous step.
-    SELECT lists.id AS list_id, campaign_id, optin FROM lists
+    SELECT lists.id AS list_id, campaign_id, optin, $20 as authid FROM lists
     INNER JOIN campaign_lists ON (campaign_lists.list_id = lists.id)
     WHERE lists.id = ANY($14::INT[])
 ),
 tpl AS (
     -- If there's no template_id given, use the default template.
-    SELECT (CASE WHEN $13 = 0 THEN id ELSE $13 END) AS id FROM templates WHERE is_default IS TRUE
+    SELECT (CASE WHEN $13 = 0 THEN id ELSE $13 END) AS id FROM templates WHERE authid= $20 AND is_default IS TRUE
 ),
 counts AS (
     SELECT COALESCE(COUNT(id), 0) as to_send, COALESCE(MAX(id), 0) as max_sub_id
@@ -492,26 +575,31 @@ counts AS (
         -- any status except for 'unsubscribed' (already excluded above) works.
         (CASE WHEN campLists.optin = 'double' THEN subscriber_lists.status = 'confirmed' ELSE true END)
     )
-    WHERE subscriber_lists.list_id=ANY($14::INT[])
-    AND subscribers.status='enabled'
+    WHERE subscriber_lists.list_id = ANY($14::INT[])
+    AND subscribers.status = 'enabled'
 ),
 camp AS (
-    INSERT INTO campaigns (uuid, type, name, subject, from_email, body, altbody, content_type, send_at, headers, tags, messenger, template_id, to_send, max_subscriber_id, archive, archive_slug, archive_template_id, archive_meta)
+    INSERT INTO campaigns (uuid, type, name, subject, from_email, body, altbody, content_type, send_at, headers, tags, messenger, template_id, to_send, max_subscriber_id, archive, archive_slug, archive_template_id, archive_meta, authid, music_id, vendor, loop, voice, language, fromphone)
         SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
             (SELECT id FROM tpl), (SELECT to_send FROM counts),
             (SELECT max_sub_id FROM counts), $15, $16,
-            (CASE WHEN $17 = 0 THEN (SELECT id FROM tpl) ELSE $17 END), $18
-        RETURNING id
+            (CASE WHEN $17 = 0 THEN (SELECT id FROM tpl) ELSE $17 END), $18, $20,
+            $21, $22, $23, $24, $25, $26
+        RETURNING id, authid
 ),
 med AS (
-    INSERT INTO campaign_media (campaign_id, media_id, filename)
-        (SELECT (SELECT id FROM camp), id, filename FROM media WHERE id=ANY($19::INT[]))
+    INSERT INTO campaign_media (campaign_id, media_id, filename, authid)
+        (SELECT (SELECT id FROM camp), id, filename, (SELECT authid FROM camp) FROM media WHERE id=ANY($19::INT[]) AND authid = $20)
 ),
 insLists AS (
-    INSERT INTO campaign_lists (campaign_id, list_id, list_name)
-        SELECT (SELECT id FROM camp), id, name FROM lists WHERE id=ANY($14::INT[])
+    INSERT INTO campaign_lists (campaign_id, list_id, list_name, authid)
+        SELECT (SELECT id FROM camp), id, name, (SELECT authid FROM camp) FROM lists WHERE id=ANY($14::INT[]) AND authid = $20
 )
 SELECT id FROM camp;
+
+
+
+
 
 -- name: query-campaigns
 -- Here, 'lists' is returned as an aggregated JSON array from campaign_lists because
@@ -524,7 +612,7 @@ SELECT  c.id, c.uuid, c.name, c.subject, c.from_email,
         c.messenger, c.started_at, c.to_send, c.sent, c.type,
         c.body, c.altbody, c.send_at, c.headers, c.status, c.content_type, c.tags,
         c.template_id, c.archive, c.archive_slug, c.archive_template_id, c.archive_meta,
-        c.created_at, c.updated_at,
+        c.created_at, c.updated_at, c.authid,
         COUNT(*) OVER () AS total,
         (
             SELECT COALESCE(ARRAY_TO_JSON(ARRAY_AGG(l)), '[]') FROM (
@@ -538,7 +626,14 @@ WHERE ($1 = 0 OR id = $1)
     AND (CARDINALITY($2::campaign_status[]) = 0 OR status = ANY($2))
     AND (CARDINALITY($3::VARCHAR(100)[]) = 0 OR $3 <@ tags)
     AND ($4 = '' OR TO_TSVECTOR(CONCAT(name, ' ', subject)) @@ TO_TSQUERY($4) OR CONCAT(c.name, ' ', c.subject) ILIKE $4)
+    AND (authid = $7)
 ORDER BY %order% OFFSET $5 LIMIT (CASE WHEN $6 < 1 THEN NULL ELSE $6 END);
+
+-- name: get-campaign-authid
+SELECT campaigns.*
+FROM campaigns
+WHERE  campaigns.authid = $1 ORDER BY campaigns.created_at DESC;
+
 
 -- name: get-campaign
 SELECT campaigns.*,
@@ -552,7 +647,8 @@ SELECT campaigns.*,
             WHEN $1 > 0 THEN campaigns.id = $1
             WHEN $3 != '' THEN campaigns.archive_slug = $3
             ELSE uuid = $2
-          END;
+          END
+          AND campaigns.authid = $5; 
 
 -- name: get-archived-campaigns
 SELECT COUNT(*) OVER () AS total, campaigns.*,
@@ -562,7 +658,8 @@ SELECT COUNT(*) OVER () AS total, campaigns.*,
         CASE WHEN $3 = 'default' THEN templates.id = campaigns.template_id
         ELSE templates.id = campaigns.archive_template_id END
     )
-    WHERE campaigns.archive=true AND campaigns.type='regular' AND campaigns.status=ANY('{running, paused, finished}')
+    WHERE campaigns.archive=true AND campaigns.type='regular' AND campaigns.status=ANY('{running, paused, finished}') 
+    AND campaigns.authid = $4
     ORDER by campaigns.created_at DESC OFFSET $1 LIMIT $2;
 
 -- name: get-campaign-stats
@@ -618,12 +715,12 @@ SELECT campaigns.*, COALESCE(templates.body, (SELECT body FROM templates WHERE i
 ) AS lists
 FROM campaigns
 LEFT JOIN templates ON (templates.id = (CASE WHEN $2=0 THEN campaigns.template_id ELSE $2 END))
-WHERE campaigns.id = $1;
+WHERE campaigns.id = $1 AND campaigns.authid= $3;
 
 -- name: get-campaign-status
 SELECT id, status, to_send, sent, started_at, updated_at
     FROM campaigns
-    WHERE status=$1;
+    WHERE status=$1 AND authid = $2;
 
 -- name: next-campaigns
 -- Retreives campaigns that are running (or scheduled and the time's up) and need
@@ -716,7 +813,7 @@ WITH intval AS (
 )
 SELECT campaign_id, COUNT(*) AS "count", DATE_TRUNC((SELECT * FROM intval), created_at) AS "timestamp"
     FROM %s
-    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3
+    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3 AND authid = $4
     GROUP BY campaign_id, "timestamp" ORDER BY "timestamp" ASC;
 
 -- name: get-campaign-bounce-counts
@@ -726,7 +823,7 @@ WITH intval AS (
 )
 SELECT campaign_id, COUNT(*) AS "count", DATE_TRUNC((SELECT * FROM intval), created_at) AS "timestamp"
     FROM bounces
-    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3
+    WHERE campaign_id=ANY($1) AND created_at >= $2 AND created_at <= $3 AND authid = $4
     GROUP BY campaign_id, "timestamp" ORDER BY "timestamp" ASC;
 
 -- name: get-campaign-link-counts
@@ -735,7 +832,7 @@ SELECT campaign_id, COUNT(*) AS "count", DATE_TRUNC((SELECT * FROM intval), crea
 SELECT COUNT(%s) AS "count", url
     FROM link_clicks
     LEFT JOIN links ON (link_clicks.link_id = links.id)
-    WHERE campaign_id=ANY($1) AND link_clicks.created_at >= $2 AND link_clicks.created_at <= $3
+    WHERE campaign_id=ANY($1) AND link_clicks.created_at >= $2 AND link_clicks.created_at <= $3 
     GROUP BY links.url ORDER BY "count" DESC LIMIT 50;
 
 -- name: next-campaign-subscribers
@@ -789,10 +886,10 @@ u AS (
 SELECT * FROM subs;
 
 -- name: delete-campaign-views
-DELETE FROM campaign_views WHERE created_at < $1;
+DELETE FROM campaign_views WHERE created_at < $1 AND authid = $2;
 
 -- name: delete-campaign-link-clicks
-DELETE FROM link_clicks WHERE created_at < $1;
+DELETE FROM link_clicks WHERE created_at < $1 AND authid = $2;
 
 -- name: get-one-campaign-subscriber
 SELECT * FROM subscribers
@@ -801,6 +898,15 @@ WHERE subscriber_lists.list_id=ANY(
     SELECT list_id FROM campaign_lists where campaign_id=$1 AND list_id IS NOT NULL
 )
 ORDER BY RANDOM() LIMIT 1;
+
+
+-- name: check-update-campaign-valid-data
+SELECT JSON_BUILD_OBJECT(
+				'duplicateCount', (SELECT COUNT(*) FROM campaigns WHERE name = $1 AND authid = $2 AND id != $6),
+				'templateCount', (SELECT COUNT(*) FROM templates WHERE id = $3 AND authid = $2 AND is_default IS TRUE),
+				'mediaCount', (SELECT COUNT(*) FROM media WHERE id = ANY($4::INT[]) AND authid = $2),
+                'listCount', (SELECT COUNT(*) FROM lists WHERE id = ANY($5::INT[]) AND authid = $2)
+        ) AS data;
 
 -- name: update-campaign
 WITH camp AS (
@@ -822,7 +928,8 @@ WITH camp AS (
         archive_template_id=$17,
         archive_meta=$18,
         updated_at=NOW()
-    WHERE id = $1 RETURNING id
+    WHERE (id = $1)
+    AND (authid=$20) RETURNING id, authid
 ),
 clists AS (
     -- Reset list relationships
@@ -834,11 +941,11 @@ med AS (
 ),
 medi AS (
     INSERT INTO campaign_media (campaign_id, media_id, filename)
-        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($19::INT[]))
+        (SELECT $1 AS campaign_id, id, filename FROM media WHERE id=ANY($19::INT[]) AND authid = $20)
         ON CONFLICT (campaign_id, media_id) DO NOTHING
 )
 INSERT INTO campaign_lists (campaign_id, list_id, list_name)
-    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($14::INT[]))
+    (SELECT $1 as campaign_id, id, name FROM lists WHERE id=ANY($14::INT[]) AND authid = $20)
     ON CONFLICT (campaign_id, list_id) DO UPDATE SET list_name = EXCLUDED.list_name;
 
 -- name: update-campaign-counts
@@ -850,7 +957,7 @@ UPDATE campaigns SET
 WHERE id=$1;
 
 -- name: update-campaign-status
-UPDATE campaigns SET status=$2, updated_at=NOW() WHERE id = $1;
+UPDATE campaigns SET status=$2, updated_at=NOW() WHERE id = $1 AND authid = $3;
 
 -- name: update-campaign-archive
 UPDATE campaigns SET
@@ -859,19 +966,64 @@ UPDATE campaigns SET
     archive_template_id=(CASE WHEN $4 > 0 THEN $4 ELSE archive_template_id END),
     archive_meta=(CASE WHEN $5::TEXT != '' THEN $5::JSONB ELSE archive_meta END),
     updated_at=NOW()
-    WHERE id=$1;
+    WHERE id=$1 AND authid = $6;
 
 -- name: delete-campaign
-DELETE FROM campaigns WHERE id=$1;
+DELETE FROM campaigns WHERE id=$1 AND authid = $2;
+
+-- name: get-campaign-report
+SELECT
+    campaigns.*,
+    COALESCE(templates.body,
+        (SELECT body FROM templates WHERE is_default = true LIMIT 1)
+    ) AS template_body,
+    COALESCE(( 
+        SELECT COUNT(*) FROM campaign_views
+        WHERE campaign_views.campaign_id = campaigns.id AND campaign_views.authid = campaigns.authid
+    ), 0) AS views,
+    COALESCE(( 
+        SELECT COUNT(campaign_id) FROM link_clicks
+        WHERE link_clicks.campaign_id = campaigns.id AND link_clicks.authid = campaigns.authid
+    ), 0) AS clicks,
+    COALESCE(( 
+        SELECT COUNT(campaign_id) FROM bounces
+        WHERE bounces.campaign_id = campaigns.id AND bounces.authid = campaigns.authid
+    ), 0) AS bounces,
+    (SELECT json_agg(
+        json_build_object(
+            'list', lists.*,
+            'subscriber_count', 
+            (SELECT COUNT(*) 
+             FROM subscriber_lists
+             WHERE subscriber_lists.list_id = lists.id)
+        )
+    )
+     FROM lists 
+     JOIN campaign_lists ON campaign_lists.list_id = lists.id 
+     WHERE campaign_lists.campaign_id = campaigns.id AND campaign_lists.authid = campaigns.authid
+    ) AS lists,
+    (SELECT json_agg(media) FROM media
+        JOIN campaign_media ON campaign_media.media_id = media.id 
+        WHERE campaign_media.campaign_id = campaigns.id AND campaign_media.authid = campaigns.authid
+    ) AS media
+FROM campaigns
+LEFT JOIN templates ON templates.id = campaigns.template_id
+WHERE ($1::int[] IS NULL OR array_length($1::int[], 1) = 0 OR campaigns.id = ANY($1::int[]))
+AND campaigns.authid = $2 AND (NULLIF($3, '') IS NULL OR campaigns.status = $3::campaign_status) 
+AND ($4::timestamp IS NULL OR campaigns.created_at >= $4) AND ($5::timestamp IS NULL OR campaigns.created_at < $5)
+ORDER BY %order%;
+
 
 -- name: register-campaign-view
 WITH view AS (
-    SELECT campaigns.id as campaign_id, subscribers.id AS subscriber_id FROM campaigns
+    SELECT campaigns.id as campaign_id, campaigns.authid as campaign_authid, subscribers.id AS subscriber_id FROM campaigns
     LEFT JOIN subscribers ON (CASE WHEN $2::TEXT != '' THEN subscribers.uuid = $2::UUID ELSE FALSE END)
     WHERE campaigns.uuid = $1
 )
-INSERT INTO campaign_views (campaign_id, subscriber_id)
-    VALUES((SELECT campaign_id FROM view), (SELECT subscriber_id FROM view));
+INSERT INTO campaign_views (campaign_id, subscriber_id, authid)
+    VALUES((SELECT campaign_id FROM view), (SELECT subscriber_id FROM view), (SELECT campaign_authid FROM view));
+
+
 
 -- users
 -- name: get-users
@@ -899,12 +1051,12 @@ DELETE FROM users WHERE $1 != 1 AND id=$1;
 -- name: get-templates
 -- Only if the second param ($2) is true, body is returned.
 SELECT id, name, type, subject, (CASE WHEN $2 = false THEN body ELSE '' END) as body,
-    is_default, created_at, updated_at
-    FROM templates WHERE ($1 = 0 OR id = $1) AND ($3 = '' OR type = $3::template_type)
+    is_default, created_at, updated_at,authid
+    FROM templates WHERE ($1 = 0 OR id = $1) AND ($3 = '' OR type = $3::template_type) AND (authid=$4)
     ORDER BY created_at;
 
 -- name: create-template
-INSERT INTO templates (name, type, subject, body) VALUES($1, $2, $3, $4) RETURNING id;
+INSERT INTO templates (name, type, subject, body, authid) VALUES($1, $2, $3, $4, $5) RETURNING id;
 
 -- name: update-template
 UPDATE templates SET
@@ -912,19 +1064,22 @@ UPDATE templates SET
     subject=(CASE WHEN $3 != '' THEN $3 ELSE name END),
     body=(CASE WHEN $4 != '' THEN $4 ELSE body END),
     updated_at=NOW()
-WHERE id = $1;
+WHERE id = $1 AND authid = $5;
+
+-- name: get-template-by-authid
+SELECT COUNT(*) FROM templates WHERE id = $1 AND authid = $2
 
 -- name: set-default-template
 WITH u AS (
-    UPDATE templates SET is_default=true WHERE id=$1 AND type='campaign' RETURNING id
+    UPDATE templates SET is_default=true WHERE id=$1 AND type='campaign' AND authid = $2 RETURNING id
 )
-UPDATE templates SET is_default=false WHERE id != $1;
+UPDATE templates SET is_default=false WHERE id != $1 AND authid = $2;
 
 -- name: delete-template
 -- Delete a template as long as there's more than one. On deletion, set all campaigns
 -- with that template to the default template instead.
 WITH tpl AS (
-    DELETE FROM templates WHERE id = $1 AND (SELECT COUNT(id) FROM templates) > 1 AND is_default = false RETURNING id
+    DELETE FROM templates WHERE id = $1 AND (SELECT COUNT(id) FROM templates) > 1 AND is_default = false AND authid = $2 RETURNING id
 ),
 def AS (
     SELECT id FROM templates WHERE is_default = true AND type='campaign' LIMIT 1
@@ -937,52 +1092,120 @@ SELECT id FROM tpl;
 
 -- media
 -- name: insert-media
-INSERT INTO media (uuid, filename, thumb, content_type, provider, meta, created_at) VALUES($1, $2, $3, $4, $5, $6, NOW()) RETURNING id;
+INSERT INTO media (uuid, filename, thumb, content_type, provider, meta, created_at, authid) VALUES($1, $2, $3, $4, $5, $6, NOW(), $7) RETURNING id;
 
 -- name: query-media
 SELECT COUNT(*) OVER () AS total, * FROM media
-    WHERE ($1 = '' OR filename ILIKE $1) AND provider=$2 ORDER BY created_at DESC OFFSET $3 LIMIT $4;
+    WHERE ($1 = '' OR filename ILIKE $1) AND provider=$2  AND authid = $5 ORDER BY created_at DESC OFFSET $3 LIMIT $4;
 
 -- name: get-media
-SELECT * FROM media WHERE CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END;
+SELECT * FROM media WHERE (CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END)  AND authid = $3;
 
 -- name: delete-media
-DELETE FROM media WHERE id=$1 RETURNING filename;
+DELETE FROM media WHERE id=$1 AND authid=$2;
+
+-- name: get-extensions
+SELECT jsonb_array_elements_text(value) FROM settings WHERE key = 'upload.extensions' AND authid = $1;
+
+-- name: get-file-path
+SELECT value FROM settings WHERE key = 'upload.filesystem.upload_path' AND authid = $1;
+
+-- name: get-upload-provider
+SELECT value FROM settings WHERE key = 'upload.provider' AND authid = $1;
+
+-- name: get-s3-upload-data
+SELECT key, value FROM settings WHERE key LIKE 'upload.s3.%' AND authid = $1;
+
+-- name: get-file-system-upload-data
+SELECT key, value FROM settings 
+WHERE key IN ('upload.filesystem.upload_path', 'upload.filesystem.upload_uri', 'app.root_url') AND authid = $1;
 
 -- links
 -- name: create-link
-INSERT INTO links (uuid, url) VALUES($1, $2) ON CONFLICT (url) DO UPDATE SET url=EXCLUDED.url RETURNING uuid;
+INSERT INTO links (uuid, url, authid) VALUES($1, $2, $3) ON CONFLICT (url) DO UPDATE SET url=EXCLUDED.url RETURNING uuid;
 
 -- name: register-link-click
 WITH link AS(
-    SELECT id, url FROM links WHERE uuid = $1
+    SELECT id, url, authid FROM links WHERE uuid = $1 AND authid= $4
 )
-INSERT INTO link_clicks (campaign_id, subscriber_id, link_id) VALUES(
+INSERT INTO link_clicks (campaign_id, subscriber_id, link_id, authid) VALUES(
     (SELECT id FROM campaigns WHERE uuid = $2),
     (SELECT id FROM subscribers WHERE
         (CASE WHEN $3::TEXT != '' THEN subscribers.uuid = $3::UUID ELSE FALSE END)
     ),
-    (SELECT id FROM link)
+    (SELECT id FROM link),
+    (SELECT authid FROM link)
 ) RETURNING (SELECT url FROM link);
 
 -- name: get-dashboard-charts
 SELECT data FROM mat_dashboard_charts;
 
 -- name: get-dashboard-counts
-SELECT data FROM mat_dashboard_counts;
+SELECT JSON_BUILD_OBJECT(
+			'subscribers', JSON_BUILD_OBJECT(
+				'total', (SELECT COUNT(*) FROM subscribers WHERE authid = $1 AND created_at BETWEEN $2 AND $3),
+				'enabled', (SELECT COUNT(*) FROM subscribers WHERE status='enabled' AND authid =$1 AND created_at BETWEEN $2 AND $3),
+				'blocklisted', (SELECT COUNT(*) FROM subscribers WHERE status='blocklisted' AND authid =$1 AND created_at BETWEEN $2 AND $3),
+				'orphans', (
+					SELECT COUNT(subscribers.id)
+					FROM subscribers
+					LEFT JOIN subscriber_lists ON subscribers.id = subscriber_lists.subscriber_id
+					WHERE subscriber_lists.subscriber_id IS NULL
+                    AND subscribers.authid = $1 AND subscribers.created_at BETWEEN $2 AND $3
+				)
+			),
+			'lists', JSON_BUILD_OBJECT(
+				'total', (SELECT COUNT(*) FROM lists WHERE authid =$1 AND created_at BETWEEN $2 AND $3),
+				'private', (SELECT COUNT(*) FROM lists WHERE authid =$1 AND type = 'private' AND created_at BETWEEN $2 AND $3),
+				'public', (SELECT COUNT(*) FROM lists WHERE authid =$1 AND type = 'public' AND created_at BETWEEN $2 AND $3),
+				'optin_single', (SELECT COUNT(*) FROM lists WHERE authid =$1 AND optin = 'single' AND created_at BETWEEN $2 AND $3),
+				'optin_double', (SELECT COUNT(*) FROM lists WHERE authid =$1 AND optin = 'double' AND created_at BETWEEN $2 AND $3)
+			),
+			'campaigns', JSON_BUILD_OBJECT(
+				'total', (SELECT COUNT(*) FROM campaigns WHERE authid =$1 AND created_at BETWEEN $2 AND $3),
+				'active', (SELECT COUNT(*) FROM campaigns WHERE authid =$1 AND status = 'running' AND created_at BETWEEN $2 AND $3),
+				'draft', (SELECT COUNT(*) FROM campaigns WHERE authid =$1 AND status = 'draft' AND created_at BETWEEN $2 AND $3),
+				'paused', (SELECT COUNT(*) FROM campaigns WHERE authid =$1 AND status = 'paused' AND created_at BETWEEN $2 AND $3),
+				'cancelled', (SELECT COUNT(*) FROM campaigns WHERE authid =$1 AND status = 'cancelled' AND created_at BETWEEN $2 AND $3),
+				'total_sent_messages', (SELECT SUM(sent) FROM campaigns WHERE authid =$1 AND created_at BETWEEN $2 AND $3),
+				'total_to_send_counts', (SELECT SUM(to_send) FROM campaigns WHERE authid =$1 AND created_at BETWEEN $2 AND $3)
+			),
+			'media', JSON_BUILD_OBJECT(
+				'total', (SELECT COUNT(*) FROM media WHERE authid =$1 AND created_at BETWEEN $2 AND $3)
+			),
+			'links', JSON_BUILD_OBJECT(
+				'total', (SELECT COUNT(*) FROM links WHERE authid =$1 AND created_at BETWEEN $2 AND $3),
+				'total_clicks', (SELECT COUNT(*) FROM link_clicks WHERE authid =$1 AND created_at BETWEEN $2 AND $3)
+			),
+			'subscription_status', JSON_BUILD_OBJECT(
+				'total', (SELECT COUNT(*) FROM subscriber_lists WHERE authid =$1 AND created_at BETWEEN $2 AND $3),
+				'unconfirmed', (SELECT COUNT(*) FROM subscriber_lists WHERE authid =$1 AND  status = 'unconfirmed' AND created_at BETWEEN $2 AND $3),
+				'confirmed', (SELECT COUNT(*) FROM subscriber_lists WHERE authid =$1 AND  status = 'confirmed' AND created_at BETWEEN $2 AND $3),
+				'unsubscribed', (SELECT COUNT(*) FROM subscriber_lists WHERE authid =$1 AND  status = 'unsubscribed' AND created_at BETWEEN $2 AND $3)
+			)
+		) AS data;
 
 -- name: get-settings
-SELECT JSON_OBJECT_AGG(key, value) AS settings FROM (SELECT * FROM settings ORDER BY key) t;
+--SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;
+
+ SELECT JSON_OBJECT_AGG(key, value) AS settings FROM (SELECT * FROM settings  WHERE authid = $1 ORDER BY key) t;
+-- SELECT JSON_OBJECT_AGG(key, value) AS settings
+-- FROM (SELECT key, value FROM settings ORDER BY key) t;
+-- SELECT * FROM settings WHERE authid = $1 RETURNING JSON_OBJECT_AGG(key, value);
+
+
+
 
 -- name: update-settings
 UPDATE settings AS s SET value = c.value
-    -- For each key in the incoming JSON map, update the row with the key and its value.
-    FROM(SELECT * FROM JSONB_EACH($1)) AS c(key, value) WHERE s.key = c.key;
+    -- For each key in the incoming JSON map, update the row with the key and its value. AND s.authid = $2
+    FROM(SELECT * FROM JSONB_EACH($1)) AS c(key, value) WHERE s.key = c.key AND authid = $2;
 
 -- name: record-bounce
 -- Insert a bounce and count the bounces for the subscriber and either unsubscribe them,
 WITH sub AS (
-    SELECT id, status FROM subscribers WHERE CASE WHEN $1 != '' THEN uuid = $1::UUID ELSE email = $2 END
+    SELECT id, status, authid FROM subscribers
+    WHERE CASE WHEN $1 != '' THEN uuid = $1::UUID ELSE email = $2 END
 ),
 camp AS (
     SELECT id FROM campaigns WHERE $3 != '' AND uuid = $3::UUID
@@ -1002,11 +1225,11 @@ block2 AS (
 ),
 bounce AS (
     -- Record the bounce if the subscriber is not already blocklisted;
-    INSERT INTO bounces (subscriber_id, campaign_id, type, source, meta, created_at)
-    SELECT (SELECT id FROM sub), (SELECT id FROM camp), $4, $5, $6, $7
+    INSERT INTO bounces (subscriber_id, campaign_id, type, source, meta, created_at, authid)
+    SELECT (SELECT id FROM sub), (SELECT id FROM camp), $4, $5, $6, $7, (SELECT authid FROM sub)
     WHERE NOT EXISTS (SELECT 1 WHERE (SELECT status FROM sub) = 'blocklisted' OR (SELECT num FROM num) > $8)
 )
--- This delete  will only run when $9 = 'delete' and the number of bounces exceed $8.
+-- This delete will only run when $9 = 'delete' and the number of bounces exceed $8.
 DELETE FROM subscribers
     WHERE $9 = 'delete' AND (SELECT num FROM num) >= $8 AND id = (SELECT id FROM sub);
 
@@ -1020,27 +1243,29 @@ SELECT COUNT(*) OVER () AS total,
     bounces.subscriber_id,
     subscribers.uuid AS subscriber_uuid,
     subscribers.email AS email,
-    subscribers.email AS email,
-    (
-        CASE WHEN bounces.campaign_id IS NOT NULL
+    -- Correct CASE syntax
+    CASE 
+        WHEN bounces.campaign_id IS NOT NULL 
         THEN JSON_BUILD_OBJECT('id', bounces.campaign_id, 'name', campaigns.name)
-        ELSE NULL END
-    ) AS campaign
+        ELSE NULL 
+    END AS campaign
 FROM bounces
-LEFT JOIN subscribers ON (subscribers.id = bounces.subscriber_id)
-LEFT JOIN campaigns ON (campaigns.id = bounces.campaign_id)
-WHERE ($1 = 0 OR bounces.id = $1)
-    AND ($2 = 0 OR bounces.campaign_id = $2)
-    AND ($3 = 0 OR bounces.subscriber_id = $3)
-    AND ($4 = '' OR bounces.source = $4)
+LEFT JOIN subscribers ON subscribers.id = bounces.subscriber_id
+LEFT JOIN campaigns ON campaigns.id = bounces.campaign_id
+WHERE ($1 = 0 OR bounces.id = $1)  -- Filter by bounce id if provided
+    AND ($2 = 0 OR bounces.campaign_id = $2)  -- Filter by campaign id if provided
+    AND ($3 = 0 OR bounces.subscriber_id = $3)  -- Filter by subscriber id if provided
+    AND ($4 = '' OR bounces.source = $4)  -- Filter by source if provided
+    AND (bounces.authid = $7)  -- Filter by authid from header
 ORDER BY %order% OFFSET $5 LIMIT $6;
 
+
 -- name: delete-bounces
-DELETE FROM bounces WHERE CARDINALITY($1::INT[]) = 0 OR id = ANY($1);
+DELETE FROM bounces WHERE CARDINALITY($1::INT[]) = 0 OR id = ANY($1) AND authid = $2;
 
 -- name: delete-bounces-by-subscriber
 WITH sub AS (
-    SELECT id FROM subscribers WHERE CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2 END
+    SELECT id FROM subscribers WHERE (CASE WHEN $1 > 0 THEN id = $1 ELSE uuid = $2  END) AND authid = $3
 )
 DELETE FROM bounces WHERE subscriber_id = (SELECT id FROM sub);
 
@@ -1048,3 +1273,7 @@ DELETE FROM bounces WHERE subscriber_id = (SELECT id FROM sub);
 -- name: get-db-info
 SELECT JSON_BUILD_OBJECT('version', (SELECT VERSION()),
                         'size_mb', (SELECT ROUND(pg_database_size((SELECT CURRENT_DATABASE()))/(1024^2)))) AS info;
+
+-- name: get-messenger-by-authid
+SELECT (messenger->>'root_url') AS fax_billing_root_url FROM settings, jsonb_array_elements(value::jsonb) AS messenger
+WHERE key = 'messengers' AND messenger->>'name' = $2 AND authid = $1;

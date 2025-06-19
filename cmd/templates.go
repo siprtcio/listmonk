@@ -40,9 +40,14 @@ func handleGetTemplates(c echo.Context) error {
 		noBody, _ = strconv.ParseBool(c.QueryParam("no_body"))
 	)
 
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 	// Fetch one list.
 	if id > 0 {
-		out, err := app.core.GetTemplate(id, noBody)
+		out, err := app.core.GetTemplate(id, noBody, authID)
 		if err != nil {
 			return err
 		}
@@ -50,7 +55,7 @@ func handleGetTemplates(c echo.Context) error {
 		return c.JSON(http.StatusOK, okResp{out})
 	}
 
-	out, err := app.core.GetTemplates("", noBody)
+	out, err := app.core.GetTemplates("", noBody, authID)
 	if err != nil {
 		return err
 	}
@@ -64,6 +69,11 @@ func handlePreviewTemplate(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	tpl := models.Template{
 		Type: c.FormValue("template_type"),
@@ -86,7 +96,7 @@ func handlePreviewTemplate(c echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 		}
 
-		t, err := app.core.GetTemplate(id, false)
+		t, err := app.core.GetTemplate(id, false, authID)
 		if err != nil {
 			return err
 		}
@@ -104,8 +114,9 @@ func handlePreviewTemplate(c echo.Context) error {
 			FromEmail:    "dummy-campaign@listmonk.app",
 			TemplateBody: tpl.Body,
 			Body:         dummyTpl,
+			AuthID:       authID,
 		}
-
+		
 		if err := camp.CompileTemplate(app.manager.TemplateFuncs(&camp)); err != nil {
 			return echo.NewHTTPError(http.StatusBadRequest,
 				app.i18n.Ts("templates.errorCompiling", "error", err.Error()))
@@ -145,6 +156,12 @@ func handleCreateTemplate(c echo.Context) error {
 		o   = models.Template{}
 	)
 
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
 	if err := c.Bind(&o); err != nil {
 		return err
 	}
@@ -152,6 +169,7 @@ func handleCreateTemplate(c echo.Context) error {
 	if err := validateTemplate(o, app); err != nil {
 		return err
 	}
+	o.AuthID = authID
 
 	var f template.FuncMap
 
@@ -170,7 +188,7 @@ func handleCreateTemplate(c echo.Context) error {
 	}
 
 	// Create the template the in the DB.
-	out, err := app.core.CreateTemplate(o.Name, o.Type, o.Subject, []byte(o.Body))
+	out, err := app.core.CreateTemplate(o.Name, o.Type, o.Subject, []byte(o.Body), o.AuthID)
 	if err != nil {
 		return err
 	}
@@ -191,6 +209,12 @@ func handleUpdateTemplate(c echo.Context) error {
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
 
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
@@ -203,6 +227,8 @@ func handleUpdateTemplate(c echo.Context) error {
 	if err := validateTemplate(o, app); err != nil {
 		return err
 	}
+
+	o.AuthID = authID
 
 	var f template.FuncMap
 
@@ -220,7 +246,7 @@ func handleUpdateTemplate(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	out, err := app.core.UpdateTemplate(id, o.Name, o.Subject, []byte(o.Body))
+	out, err := app.core.UpdateTemplate(id, o.Name, o.Subject, []byte(o.Body), o.AuthID)
 	if err != nil {
 		return err
 	}
@@ -241,11 +267,16 @@ func handleTemplateSetDefault(c echo.Context) error {
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
 
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
 
-	if err := app.core.SetDefaultTemplate(id); err != nil {
+	if err := app.core.SetDefaultTemplate(id, authID); err != nil {
 		return err
 	}
 
@@ -259,11 +290,16 @@ func handleDeleteTemplate(c echo.Context) error {
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
 
+	authID := c.Request().Header.Get("X-Auth-ID")
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
 
-	if err := app.core.DeleteTemplate(id); err != nil {
+	if err := app.core.DeleteTemplate(id, authID); err != nil {
 		return err
 	}
 

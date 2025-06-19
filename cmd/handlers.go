@@ -91,6 +91,7 @@ func initHTTPHandlers(e *echo.Echo, app *App) {
 	g.GET("/api/about", handleGetAboutInfo)
 
 	g.GET("/api/subscribers/:id", handleGetSubscriber)
+	g.GET("/api/subscribers/authid/:authid", handleGetSubscribersByAuthID)
 	g.GET("/api/subscribers/:id/export", handleExportSubscriberData)
 	g.GET("/api/subscribers/:id/bounces", handleGetSubscriberBounces)
 	g.DELETE("/api/subscribers/:id/bounces", handleDeleteSubscriberBounces)
@@ -125,6 +126,7 @@ func initHTTPHandlers(e *echo.Echo, app *App) {
 
 	g.GET("/api/lists", handleGetLists)
 	g.GET("/api/lists/:id", handleGetLists)
+	//g.GET("/api/lists/authid/:authid", handleGetListsByAuthID)
 	g.POST("/api/lists", handleCreateList)
 	g.PUT("/api/lists/:id", handleUpdateList)
 	g.DELETE("/api/lists/:id", handleDeleteLists)
@@ -132,6 +134,7 @@ func initHTTPHandlers(e *echo.Echo, app *App) {
 	g.GET("/api/campaigns", handleGetCampaigns)
 	g.GET("/api/campaigns/running/stats", handleGetRunningCampaignStats)
 	g.GET("/api/campaigns/:id", handleGetCampaign)
+	g.GET("/api/campaigns/authid/:authid", handleGetCampaignByAuthId)
 	g.GET("/api/campaigns/analytics/:type", handleGetCampaignViewAnalytics)
 	g.GET("/api/campaigns/:id/preview", handlePreviewCampaign)
 	g.POST("/api/campaigns/:id/preview", handlePreviewCampaign)
@@ -143,6 +146,7 @@ func initHTTPHandlers(e *echo.Echo, app *App) {
 	g.PUT("/api/campaigns/:id/status", handleUpdateCampaignStatus)
 	g.PUT("/api/campaigns/:id/archive", handleUpdateCampaignArchive)
 	g.DELETE("/api/campaigns/:id", handleDeleteCampaign)
+	g.GET("/api/campaigns/report", handleGetCampaignsReport)
 
 	g.GET("/api/media", handleGetMedia)
 	g.GET("/api/media/:id", handleGetMedia)
@@ -323,7 +327,7 @@ func subscriberExists(next echo.HandlerFunc, params ...string) echo.HandlerFunc 
 			subUUID = c.Param("subUUID")
 		)
 
-		if _, err := app.core.GetSubscriber(0, subUUID, ""); err != nil {
+		if _, err := app.core.GetSubscriber(0, subUUID, "", ""); err != nil {
 			if er, ok := err.(*echo.HTTPError); ok && er.Code == http.StatusBadRequest {
 				return c.Render(http.StatusNotFound, tplMessage,
 					makeMsgTpl(app.i18n.T("public.notFoundTitle"), "", er.Message.(string)))

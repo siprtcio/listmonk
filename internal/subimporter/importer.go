@@ -294,9 +294,9 @@ func (s *Session) Start() {
 		}
 
 		if s.opt.Mode == ModeSubscribe {
-			_, err = stmt.Exec(uu, sub.Email, sub.Name, sub.Attribs, pq.Array(listIDs), s.opt.SubStatus, s.opt.Overwrite)
+			_, err = stmt.Exec(uu, sub.Email, sub.Name, sub.Attribs, pq.Array(listIDs), s.opt.SubStatus, s.opt.Overwrite, sub.AuthID)
 		} else if s.opt.Mode == ModeBlocklist {
-			_, err = stmt.Exec(uu, sub.Email, sub.Name, sub.Attribs)
+			_, err = stmt.Exec(uu, sub.Email, sub.Name, sub.Attribs, sub.AuthID)
 		}
 		if err != nil {
 			s.log.Printf("error executing insert: %v", err)
@@ -357,7 +357,7 @@ func (s *Session) Stop() {
 // ExtractZIP takes a ZIP file's path and extracts all .csv files in it to
 // a temporary directory, and returns the name of the temp directory and the
 // list of extracted .csv files.
-func (s *Session) ExtractZIP(srcPath string, maxCSVs int) (string, []string, error) {
+func (s *Session) ExtractZIP(srcPath string, maxCSVs int, authID string) (string, []string, error) {
 	if s.im.isDone() {
 		return "", nil, ErrIsImporting
 	}
@@ -436,7 +436,7 @@ func (s *Session) ExtractZIP(srcPath string, maxCSVs int) (string, []string, err
 }
 
 // LoadCSV loads a CSV file and validates and imports the subscriber entries in it.
-func (s *Session) LoadCSV(srcPath string, delim rune) error {
+func (s *Session) LoadCSV(srcPath string, delim rune, authID string) error {
 	if s.im.isDone() {
 		return ErrIsImporting
 	}
@@ -561,6 +561,7 @@ func (s *Session) LoadCSV(srcPath string, delim rune) error {
 			}
 		}
 
+		sub.AuthID = authID
 		// Send the subscriber to the queue.
 		s.subQueue <- sub
 	}
@@ -631,15 +632,31 @@ func (im *Importer) SanitizeEmail(email string) (string, error) {
 
 // ValidateFields validates incoming subscriber field values and returns sanitized fields.
 func (im *Importer) ValidateFields(s SubReq) (SubReq, error) {
-	if len(s.Email) > 1000 {
-		return s, errors.New(im.i18n.T("subscribers.invalidEmail"))
+	s.Email = strings.TrimSpace(s.Email)
+	var number string
+
+	if len(s.Attribs) > 0 {
+		if n, ok := s.Attribs["number"].(string); ok {
+			number = strings.TrimSpace(n)
+			s.Attribs["number"] = number // store trimmed version back
+		}
 	}
 
-	em, err := im.SanitizeEmail(s.Email)
-	if err != nil {
-		return s, err
+	if s.Email == "" && number == "" {
+		return s, errors.New("either email or number is required")
 	}
-	s.Email = strings.ToLower(em)
+
+	if s.Email != "" {
+		if len(s.Email) > 1000 {
+			return s, errors.New(im.i18n.T("subscribers.invalidEmail"))
+		}
+
+		em, err := im.SanitizeEmail(s.Email)
+		if err != nil {
+			return s, err
+		}
+		s.Email = strings.ToLower(em)
+	}
 
 	// If there's no name, use the name part of the e-mail.
 	s.Name = strings.TrimSpace(s.Name)
@@ -654,6 +671,15 @@ func (im *Importer) ValidateFields(s SubReq) (SubReq, error) {
 		s.Name = strings.Join(parts, " ")
 	}
 
+	if len(s.Attribs) > 0 {
+		if number, ok := s.Attribs["number"].(string); ok {
+			phoneRegex := `^$|^\+?\d{7,15}$`
+			re := regexp.MustCompile(phoneRegex)
+			if !re.MatchString(number) {
+				return s, errors.New("invalid number")
+			}
+		}
+	}
 	return s, nil
 }
 

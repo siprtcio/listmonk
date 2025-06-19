@@ -20,12 +20,13 @@ type Media struct {
 	Meta        models.JSON `db:"meta" json:"meta"`
 	URL         string      `json:"url"`
 
-	Total int `db:"total" json:"-"`
+	Total  int    `db:"total" json:"-"`
+	AuthID string `db:"authid" json:"auth_id"`
 }
 
 // Store represents functions to store and retrieve media (files).
 type Store interface {
-	Put(string, string, io.ReadSeeker) (string, error)
+	Put(string, string, io.ReadSeeker, string) (string, error)
 	Delete(string) error
 	GetURL(string) string
 	GetBlob(string) ([]byte, error)

@@ -50,9 +50,16 @@ var (
 
 // handleGetSettings returns settings from the DB.
 func handleGetSettings(c echo.Context) error {
+
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
 	app := c.Get("app").(*App)
 
-	s, err := app.core.GetSettings()
+	s, err := app.core.GetSettings(authID)
 	if err != nil {
 		return err
 	}
@@ -81,14 +88,18 @@ func handleUpdateSettings(c echo.Context) error {
 		app = c.Get("app").(*App)
 		set models.Settings
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
 
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 	// Unmarshal and marshal the fields once to sanitize the settings blob.
 	if err := c.Bind(&set); err != nil {
 		return err
 	}
 
 	// Get the existing settings.
-	cur, err := app.core.GetSettings()
+	cur, err := app.core.GetSettings(authID)
 	if err != nil {
 		return err
 	}
@@ -224,7 +235,7 @@ func handleUpdateSettings(c echo.Context) error {
 	}
 
 	// Update the settings in the DB.
-	if err := app.core.UpdateSettings(set); err != nil {
+	if err := app.core.UpdateSettings(set, authID); err != nil {
 		return err
 	}
 
@@ -306,7 +317,7 @@ func handleTestSMTPSettings(c echo.Context) error {
 	m.To = []string{to}
 	m.Subject = app.i18n.T("settings.smtp.testConnection")
 	m.Body = b.Bytes()
-	if err := msgr.Push(m); err != nil {
+	if err := msgr.Push(m, ""); err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 

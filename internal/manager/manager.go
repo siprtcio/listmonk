@@ -12,6 +12,7 @@ import (
 
 	"github.com/Masterminds/sprig/v3"
 	"github.com/knadh/listmonk/internal/i18n"
+	"github.com/knadh/listmonk/logger"
 	"github.com/knadh/listmonk/models"
 )
 
@@ -30,20 +31,22 @@ const (
 type Store interface {
 	NextCampaigns(currentIDs []int64, sentCounts []int64) ([]*models.Campaign, error)
 	NextSubscribers(campID, limit int) ([]models.Subscriber, error)
-	GetCampaign(campID int) (*models.Campaign, error)
-	GetAttachment(mediaID int) (models.Attachment, error)
-	UpdateCampaignStatus(campID int, status string) error
+	GetCampaign(campID int, authID string) (*models.Campaign, error)
+	GetCampaignByAuthId(AuthID string) (*models.Campaign, error)
+	GetAttachment(mediaID int, authID string) (models.Attachment, error)
+	UpdateCampaignStatus(campID int, status string, authID string) error
 	UpdateCampaignCounts(campID int, toSend int, sent int, lastSubID int) error
-	CreateLink(url string) (string, error)
+	CreateLink(url string, authID string) (string, error)
 	BlocklistSubscriber(id int64) error
 	DeleteSubscriber(id int64) error
+	GetMessengerByAuthId(AuthID string, Messenger string) (string, error)
 }
 
 // Messenger is an interface for a generic messaging backend,
 // for instance, e-mail, SMS etc.
 type Messenger interface {
 	Name() string
-	Push(models.Message) error
+	Push(models.Message, string) error
 	Flush() error
 	Close() error
 }
@@ -87,6 +90,9 @@ type Manager struct {
 	slidingStart time.Time
 
 	tplFuncs template.FuncMap
+
+	activePipes sync.Map // Tracks campaigns currently being processed
+
 }
 
 // CampaignMessage represents an instance of campaign message to be pushed out,
@@ -141,6 +147,11 @@ type Config struct {
 type msgError struct {
 	st  *pipe
 	err error
+}
+
+type campaignState struct {
+	inProgress bool
+	mu         sync.Mutex
 }
 
 var pushTimeout = time.Second * 3
@@ -326,7 +337,7 @@ func (m *Manager) TemplateFuncs(c *models.Campaign) template.FuncMap {
 				subUUID = dummyUUID
 			}
 
-			return m.trackLink(url, msg.Campaign.UUID, subUUID)
+			return m.trackLink(url, msg.Campaign.UUID, subUUID, c.AuthID)
 		},
 		"TrackView": func(msg *CampaignMessage) template.HTML {
 			subUUID := msg.Subscriber.UUID
@@ -404,21 +415,53 @@ func (m *Manager) scanCampaigns(tick time.Duration) {
 			}
 
 			for _, c := range campaigns {
-				// Create a new pipe that'll handle this campaign's states.
-				p, err := m.newPipe(c)
-				if err != nil {
-					m.log.Printf("error processing campaign (%s): %v", c.Name, err)
-					continue
+				val, exists := m.activePipes.Load(c.ID)
+				var state *campaignState
+				if exists {
+					state = val.(*campaignState)
+				} else {
+					state = &campaignState{}
+					m.activePipes.Store(c.ID, state)
 				}
-				m.log.Printf("start processing campaign (%s)", c.Name)
 
-				// If subscriber processing is busy, move on. Blocking and waiting
-				// can end up in a race condition where the waiting campaign's
-				// state in the data source has changed.
-				select {
-				case m.nextPipes <- p:
-				default:
+				// Lock state and check if the campaign is already being processed
+				state.mu.Lock()
+				if state.inProgress {
+					state.mu.Unlock()
+					m.log.Printf("Campaign %s is already being processed, skipping.", c.Name)
+					continue // Skip if already being processed
 				}
+
+				// Mark campaign as in progress
+				state.inProgress = true
+				state.mu.Unlock()
+
+				// Start processing the campaign in a separate goroutine
+				go func(c *models.Campaign) {
+					defer func() {
+						// Ensure cleanup after processing
+						state.mu.Lock()
+						state.inProgress = false
+						state.mu.Unlock()
+					}()
+
+					// Log that the campaign is being processed
+					logger.Info("Start processing campaign", logger.LogFields{
+						"Campaign Name": c.Name,
+					})
+					p, err := m.newPipe(c)
+					if err != nil {
+						logger.Error("error processing campaign", logger.LogFields{
+							"Campaign Name": c.Name,
+							"Error":         err,
+						})
+						return
+					}
+					select {
+					case m.nextPipes <- p:
+					default:
+					}
+				}(c) // Process the campaign in a separate goroutine
 			}
 		}
 	}
@@ -484,9 +527,28 @@ func (m *Manager) worker() {
 
 			out.Headers = h
 
-			err := m.messengers[msg.Campaign.Messenger].Push(out)
+			var rootUrl string
+			var err error
+			if msg.Campaign.Messenger != "email" {
+				rootUrl, err = m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
+				if err != nil {
+					logger.Error("Error fetching messenger in campaign", logger.LogFields{
+						"Campaign Name": msg.Campaign.Name,
+						"Error":         err,
+					})
+				}
+				logger.Info("Sending message in campaign", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Root URL":      rootUrl,
+				})
+			}
+			err = m.messengers[msg.Campaign.Messenger].Push(out, rootUrl)
 			if err != nil {
-				m.log.Printf("error sending message in campaign %s: subscriber %d: %v", msg.Campaign.Name, msg.Subscriber.ID, err)
+				logger.Error("Error sending message in campaign for subscriber", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Subscriber":    msg.Subscriber.ID,
+					"Error":         err,
+				})
 			}
 
 			// Increment the send rate or the error counter if there was an error.
@@ -512,9 +574,28 @@ func (m *Manager) worker() {
 				return
 			}
 
-			err := m.messengers[msg.Messenger].Push(msg)
+			var rootUrl string
+			var err error
+			if msg.Campaign.Messenger != "email" {
+				rootUrl, err = m.store.GetMessengerByAuthId(msg.Campaign.AuthID, msg.Campaign.Messenger)
+				if err != nil {
+					logger.Error("Error fetching messenger in campaign", logger.LogFields{
+						"Campaign Name": msg.Campaign.Name,
+						"Error":         err,
+					})
+				}
+				logger.Info("Sending message in campaign", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Root URL":      rootUrl,
+				})
+			}
+			err = m.messengers[msg.Messenger].Push(msg, rootUrl)
 			if err != nil {
-				m.log.Printf("error sending message '%s': %v", msg.Subject, err)
+				logger.Error("Error sending message in campaign for subscriber", logger.LogFields{
+					"Campaign Name": msg.Campaign.Name,
+					"Subscriber":    msg.Subscriber.ID,
+					"Error":         err,
+				})
 			}
 		}
 	}
@@ -565,7 +646,7 @@ func (m *Manager) isCampaignProcessing(id int) bool {
 
 // trackLink register a URL and return its UUID to be used in message templates
 // for tracking links.
-func (m *Manager) trackLink(url, campUUID, subUUID string) string {
+func (m *Manager) trackLink(url, campUUID, subUUID string, authID string) string {
 	url = strings.ReplaceAll(url, "&amp;", "&")
 
 	m.linksMut.RLock()
@@ -576,7 +657,7 @@ func (m *Manager) trackLink(url, campUUID, subUUID string) string {
 	m.linksMut.RUnlock()
 
 	// Register link.
-	uu, err := m.store.CreateLink(url)
+	uu, err := m.store.CreateLink(url, authID)
 	if err != nil {
 		m.log.Printf("error registering tracking for link '%s': %v", url, err)
 
@@ -633,7 +714,7 @@ func (m *Manager) makeGnericFuncMap() template.FuncMap {
 func (m *Manager) attachMedia(c *models.Campaign) error {
 	// Load any media/attachments.
 	for _, mid := range []int64(c.MediaIDs) {
-		a, err := m.store.GetAttachment(int(mid))
+		a, err := m.store.GetAttachment(int(mid), c.AuthID)
 		if err != nil {
 			return fmt.Errorf("error fetching attachment %d on campaign %s: %v", mid, c.Name, err)
 		}

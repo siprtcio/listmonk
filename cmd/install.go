@@ -73,7 +73,8 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 		models.ListTypePrivate,
 		models.ListOptinSingle,
 		pq.StringArray{"test"},
-		"",
+		"test-desc",
+		"auth_id",
 	); err != nil {
 		lo.Fatalf("error creating list: %v", err)
 	}
@@ -83,7 +84,8 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 		models.ListTypePublic,
 		models.ListOptinDouble,
 		pq.StringArray{"test"},
-		"",
+		"test-desc",
+		"auth_id",
 	); err != nil {
 		lo.Fatalf("error creating list: %v", err)
 	}
@@ -96,7 +98,8 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 		`{"type": "known", "good": true, "city": "Bengaluru"}`,
 		pq.Int64Array{int64(defList)},
 		models.SubscriptionStatusUnconfirmed,
-		true); err != nil {
+		true, "auth_id",
+	); err != nil {
 		lo.Fatalf("Error creating subscriber: %v", err)
 	}
 	if _, err := q.UpsertSubscriber.Exec(
@@ -106,7 +109,7 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 		`{"type": "unknown", "good": true, "city": "Bengaluru"}`,
 		pq.Int64Array{int64(optinList)},
 		models.SubscriptionStatusUnconfirmed,
-		true); err != nil {
+		true, "auth_id"); err != nil {
 		lo.Fatalf("error creating subscriber: %v", err)
 	}
 
@@ -117,10 +120,10 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 	}
 
 	var campTplID int
-	if err := q.CreateTemplate.Get(&campTplID, "Default campaign template", models.TemplateTypeCampaign, "", campTpl.ReadBytes()); err != nil {
+	if err := q.CreateTemplate.Get(&campTplID, "Test Default campaign template", models.TemplateTypeCampaign, "", campTpl.ReadBytes(), "auth_id"); err != nil {
 		lo.Fatalf("error creating default campaign template: %v", err)
 	}
-	if _, err := q.SetDefaultTemplate.Exec(campTplID); err != nil {
+	if _, err := q.SetDefaultTemplate.Exec(campTplID, "auth_id"); err != nil {
 		lo.Fatalf("error setting default template: %v", err)
 	}
 
@@ -131,7 +134,7 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 	}
 
 	var archiveTplID int
-	if err := q.CreateTemplate.Get(&archiveTplID, "Default archive template", models.TemplateTypeCampaign, "", archiveTpl.ReadBytes()); err != nil {
+	if err := q.CreateTemplate.Get(&archiveTplID, "Test Default archive template", models.TemplateTypeCampaign, "", archiveTpl.ReadBytes(), "auth_id"); err != nil {
 		lo.Fatalf("error creating default campaign template: %v", err)
 	}
 
@@ -162,6 +165,13 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 		archiveTplID,
 		`{"name": "Subscriber"}`,
 		nil,
+		"auth_id",
+		"1",
+		"1",
+		1,
+		"1",
+		"eng",
+		"1",
 	); err != nil {
 		lo.Fatalf("error creating sample campaign: %v", err)
 	}
@@ -172,7 +182,7 @@ func install(lastVer string, db *sqlx.DB, fs stuffbin.FileSystem, prompt, idempo
 		lo.Fatalf("error reading default e-mail template: %v", err)
 	}
 
-	if _, err := q.CreateTemplate.Exec("Sample transactional template", models.TemplateTypeTx, "Welcome {{ .Subscriber.Name }}", txTpl.ReadBytes()); err != nil {
+	if _, err := q.CreateTemplate.Exec("Sample transactional template", models.TemplateTypeTx, "Welcome {{ .Subscriber.Name }}", txTpl.ReadBytes(), "auth_id"); err != nil {
 		lo.Fatalf("error creating sample transactional template: %v", err)
 	}
 
@@ -200,7 +210,7 @@ func installSchema(curVer string, db *sqlx.DB, fs stuffbin.FileSystem) error {
 func recordMigrationVersion(ver string, db *sqlx.DB) error {
 	_, err := db.Exec(fmt.Sprintf(`INSERT INTO settings (key, value)
 	VALUES('migrations', '["%s"]'::JSONB)
-	ON CONFLICT (key) DO UPDATE SET value = settings.value || EXCLUDED.value`, ver))
+	ON CONFLICT (key,authid) DO UPDATE SET value = settings.value || EXCLUDED.value`, ver))
 	return err
 }
 

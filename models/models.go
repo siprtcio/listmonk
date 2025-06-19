@@ -165,6 +165,7 @@ type Subscriber struct {
 	Attribs JSON           `db:"attribs" json:"attribs"`
 	Status  string         `db:"status" json:"status"`
 	Lists   types.JSONText `db:"lists" json:"lists"`
+	AuthID  string         `db:"authid" json:"auth_id"`
 }
 type subLists struct {
 	SubscriberID int            `db:"subscriber_id"`
@@ -229,7 +230,8 @@ type List struct {
 
 	// Pseudofield for getting the total number of subscribers
 	// in searches and queries.
-	Total int `db:"total" json:"-"`
+	Total  int    `db:"total" json:"-"`
+	AuthID string `db:"authid" json:"auth_id"`
 }
 
 // Campaign represents an e-mail campaign.
@@ -271,7 +273,28 @@ type Campaign struct {
 
 	// Pseudofield for getting the total number of subscribers
 	// in searches and queries.
-	Total int `db:"total" json:"-"`
+	Total     int    `db:"total" json:"-"`
+	AuthID    string `db:"authid" json:"auth_id"`
+	MusicID   string `db:"music_id" json:"music_id"`
+	Vendor    string `db:"vendor" json:"vendor"`
+	Loop      int    `db:"loop" json:"loop"`
+	Voice     string `db:"voice" json:"voice"`
+	Language  string `db:"language" json:"language"`
+	FromPhone string `json:"from_phone"`
+}
+
+type CampaignReport struct {
+	Campaign
+
+	Views   int `db:"views" json:"views"`
+	Clicks  int `db:"clicks" json:"clicks"`
+	Bounces int `db:"bounces" json:"bounces"`
+
+	MaxSubscriberID  int `db:"max_subscriber_id" json:"max_subscriber_id"`
+	LastSubscriberID int `db:"last_subscriber_id" json:"last_subscriber_id"`
+
+	Lists *json.RawMessage `db:"lists" json:"lists"`
+	Media *json.RawMessage `db:"media" json:"media"`
 }
 
 // CampaignMeta contains fields tracking a campaign's progress.
@@ -333,6 +356,7 @@ type Template struct {
 	// Only relevant to tx (transactional) templates.
 	SubjectTpl *txttpl.Template   `json:"-"`
 	Tpl        *template.Template `json:"-"`
+	AuthID     string             `db:"authid" json:"auth_id"`
 }
 
 // Bounce represents a single bounce event.
@@ -353,7 +377,8 @@ type Bounce struct {
 
 	// Pseudofield for getting the total number of bounces
 	// in searches and queries.
-	Total int `db:"total" json:"-"`
+	Total  int    `db:"total" json:"-"`
+	AuthID string `db:"authid" json:"auth_id"`
 }
 
 // Message is the message pushed to a Messenger.
@@ -600,7 +625,7 @@ func (c *Campaign) CompileTemplate(f template.FuncMap) error {
 
 // ConvertContent converts a campaign's body from one format to another,
 // for example, Markdown to HTML.
-func (c *Campaign) ConvertContent(from, to string) (string, error) {
+func (c *Campaign) ConvertContent(from, to string, authID string) (string, error) {
 	body := c.Body
 	for _, r := range regTplFuncs {
 		body = r.regExp.ReplaceAllString(body, r.replace)

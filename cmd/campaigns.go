@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/knadh/listmonk/logger"
 	"github.com/knadh/listmonk/models"
 	"github.com/labstack/echo/v4"
 	"github.com/lib/pq"
@@ -37,6 +39,7 @@ type campaignReq struct {
 
 	// This is only relevant to campaign test requests.
 	SubscriberEmails pq.StringArray `json:"subscribers"`
+	VoiceOption      string         `json:"voice_option"`
 }
 
 // campaignContentReq wraps params coming from API requests for converting
@@ -52,6 +55,23 @@ var (
 	regexSlug        = regexp.MustCompile(`[^\p{L}\p{M}\p{N}]`)
 )
 
+func initializeSettings(app *App, authID string) error {
+	err := initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	if err != nil {
+		return fmt.Errorf("fetching settings : %w", err)
+	}
+	app.manager = initCampaignManager(app.queries, app.constants, app)
+	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	log.Println("Calling postback messengers")
+	for _, m := range initPostbackMessengers(app.manager) {
+		app.messengers[m.Name()] = m
+	}
+	for _, m := range app.messengers {
+		app.manager.AddMessenger(m)
+	}
+	return nil
+}
+
 // handleGetCampaigns handles retrieval of campaigns.
 func handleGetCampaigns(c echo.Context) error {
 	var (
@@ -66,7 +86,13 @@ func handleGetCampaigns(c echo.Context) error {
 		noBody, _ = strconv.ParseBool(c.QueryParam("no_body"))
 	)
 
-	res, total, err := app.core.QueryCampaigns(query, status, tags, orderBy, order, pg.Offset, pg.Limit)
+	// Retrieve authid from headers (adjust header key if needed)
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	res, total, err := app.core.QueryCampaigns(query, status, tags, orderBy, order, pg.Offset, pg.Limit, authID)
 	if err != nil {
 		return err
 	}
@@ -97,11 +123,16 @@ func handleGetCampaigns(c echo.Context) error {
 func handleGetCampaign(c echo.Context) error {
 	var (
 		app       = c.Get("app").(*App)
-		id, _     = strconv.Atoi(c.Param("id"))
+		id, err   = strconv.Atoi(c.Param("id"))
 		noBody, _ = strconv.ParseBool(c.QueryParam("no_body"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
 
-	out, err := app.core.GetCampaign(id, "", "")
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	out, err := app.core.GetCampaign(id, "", "", authID)
 	if err != nil {
 		return err
 	}
@@ -113,6 +144,39 @@ func handleGetCampaign(c echo.Context) error {
 	return c.JSON(http.StatusOK, okResp{out})
 }
 
+func handleGetCampaignByAuthId(c echo.Context) error {
+	var (
+		app       = c.Get("app").(*App)
+		noBody, _ = strconv.ParseBool(c.QueryParam("no_body"))
+		authID    = c.Param("authid")
+	)
+
+	// Attempt to retrieve the campaigns by AuthID
+	out, err := app.core.GetCampaignByAuthId(authID)
+
+	if err != nil {
+		// Log the error details
+		app.log.Printf("Error fetching campaigns with AuthID: %s Error: %v", authID, err)
+
+		// Return internal server error for other cases
+		return echo.NewHTTPError(http.StatusInternalServerError, "Error retrieving campaigns")
+	}
+
+	// Log successful retrieval of the campaigns
+	app.log.Printf("Successfully retrieved %d campaigns with AuthID: %s", len(out), authID)
+
+	// If the "no_body" query parameter is set, clear the body content from each campaign
+	if noBody {
+		app.log.Printf("NoBody flag is true, clearing the campaign body content")
+		for i := range out {
+			out[i].Body = "" // Clear the body for each campaign
+		}
+	}
+
+	// Return the campaigns data as JSON
+	return c.JSON(http.StatusOK, okResp{out})
+}
+
 // handlePreviewCampaign renders the HTML preview of a campaign body.
 func handlePreviewCampaign(c echo.Context) error {
 	var (
@@ -120,12 +184,20 @@ func handlePreviewCampaign(c echo.Context) error {
 		id, _    = strconv.Atoi(c.Param("id"))
 		tplID, _ = strconv.Atoi(c.FormValue("template_id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 
-	camp, err := app.core.GetCampaignForPreview(id, tplID)
+	camp, err := app.core.GetCampaignForPreview(id, tplID, authID)
 	if err != nil {
 		return err
 	}
@@ -166,6 +238,11 @@ func handleCampaignContent(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
@@ -176,7 +253,7 @@ func handleCampaignContent(c echo.Context) error {
 		return err
 	}
 
-	out, err := camp.ConvertContent(camp.From, camp.To)
+	out, err := camp.ConvertContent(camp.From, camp.To, authID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
@@ -186,17 +263,30 @@ func handleCampaignContent(c echo.Context) error {
 
 // handleCreateCampaign handles campaign creation.
 // Newly created campaigns are always drafts.
+// handleCreateCampaign handles campaign creation.
+// Newly created campaigns are always drafts.
 func handleCreateCampaign(c echo.Context) error {
 	var (
 		app = c.Get("app").(*App)
 		o   campaignReq
 	)
 
+	// Extract the authid from the URL
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
+
 	if err := c.Bind(&o); err != nil {
 		return err
 	}
 
-	// If the campaign's 'opt-in', prepare a default message.
+	// Prepare default values and validate fields
 	if o.Type == models.CampaignTypeOptin {
 		op, err := makeOptinCampaignMessage(o, app)
 		if err != nil {
@@ -210,22 +300,66 @@ func handleCreateCampaign(c echo.Context) error {
 	if o.ContentType == "" {
 		o.ContentType = models.CampaignContentTypeRichtext
 	}
+
 	if o.Messenger == "" {
-		o.Messenger = "email"
+		o.Messenger = "email" // Default messenger
 	}
 
-	// Validate.
+	// Validate common campaign fields
 	if c, err := validateCampaignFields(o, app); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	} else {
 		o = c
 	}
 
+	// Initialize new fields for voice campaigns
+	// if o.Messenger == "voice" {
+	// 	if o.VoiceOption == "" {
+	// 		return echo.NewHTTPError(http.StatusBadRequest, "Voice option is required for voice campaigns")
+	// 	}
+
+	// 	// Validate the voice option and set the appropriate fields
+	// 	switch o.VoiceOption {
+	// 	case "template":
+	// 		// Handle template option (Ensure template ID is provided)
+	// 		o.Body = "-" // Not required for template option
+	// 	case "music":
+	// 		// Handle music option
+	// 		if o.MusicID == "" {
+	// 			return echo.NewHTTPError(http.StatusBadRequest, "Music ID is required for music option.")
+	// 		}
+	// 		o.Body = "-" // Assuming Body is not required for music
+	// 	case "text-to-speech":
+	// 		// Handle text-to-speech option
+	// 		if o.Body == "" {
+	// 			return echo.NewHTTPError(http.StatusBadRequest, "Body text is required for text-to-speech option.")
+	// 		}
+	// 		// Set additional fields like Vendor and Language if needed
+	// 		if o.Vendor == "" {
+	// 			o.Vendor = "aws" // Default vendor
+	// 		}
+	// 		if o.Language == "" {
+	// 			o.Language = "en-US" // Default language
+	// 		}
+	// 	default:
+	// 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid voice option provided.")
+	// 	}
+	// } else {
+	// 	// If messenger is email or SMS, leave new fields empty
+	// 	o.MusicID = "-"
+	// 	o.Vendor = "-"
+	// 	o.Loop = 0
+	// 	o.Body = "-"
+	// 	o.Language = "-"
+	// }
+
+	// Check and set ArchiveTemplateID if not provided
 	if o.ArchiveTemplateID == 0 {
 		o.ArchiveTemplateID = o.TemplateID
 	}
 
-	out, err := app.core.CreateCampaign(o.Campaign, o.ListIDs, o.MediaIDs)
+	// Call CreateCampaign with the required parameters, including the voice option
+	out, err := app.core.CreateCampaign(o.Campaign, o.ListIDs, o.MediaIDs, authID, o.VoiceOption)
 	if err != nil {
 		return err
 	}
@@ -233,26 +367,34 @@ func handleCreateCampaign(c echo.Context) error {
 	return c.JSON(http.StatusOK, okResp{out})
 }
 
-// handleUpdateCampaign handles campaign modification.
+// handleUpdateCampaign handles campaign modification.o.AuthID = c.Param("authid")
 // Campaigns that are done cannot be modified.
 func handleUpdateCampaign(c echo.Context) error {
 	var (
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 
 	}
 
-	cm, err := app.core.GetCampaign(id, "", "")
+	cm, err := app.core.GetCampaign(id, "", "", authID)
 	if err != nil {
 		return err
 	}
 
 	if isCampaignalMutable(cm.Status) {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("campaigns.cantUpdate"))
+	}
+
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
 	}
 
 	// Read the incoming params into the existing campaign fields from the DB.
@@ -269,7 +411,7 @@ func handleUpdateCampaign(c echo.Context) error {
 		o = c
 	}
 
-	out, err := app.core.UpdateCampaign(id, o.Campaign, o.ListIDs, o.MediaIDs, o.SendLater)
+	out, err := app.core.UpdateCampaign(id, o.Campaign, o.ListIDs, o.MediaIDs, o.SendLater, authID)
 	if err != nil {
 		return err
 	}
@@ -283,6 +425,10 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
@@ -296,10 +442,33 @@ func handleUpdateCampaignStatus(c echo.Context) error {
 		return err
 	}
 
-	out, err := app.core.UpdateCampaignStatus(id, o.Status)
+	out, err := app.core.UpdateCampaignStatus(id, o.Status, authID)
 	if err != nil {
 		return err
 	}
+	uploadProvider, err := app.core.GetUploadProvider(authID)
+	if err != nil {
+		return err
+	}
+	var uploadData map[string]interface{}
+	if uploadProvider == "filesystem" {
+		uploadData, err = app.core.GetFileSystemUploadData(authID)
+		if err != nil {
+			return err
+		}
+	} else {
+		uploadData, err = app.core.GetS3UploadData(authID)
+		if err != nil {
+			return err
+		}
+	}
+
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
+	app.media = initMediaStore(uploadProvider, uploadData)
+
+	go app.manager.Run()
 
 	if o.Status == models.CampaignStatusPaused || o.Status == models.CampaignStatusCancelled {
 		app.manager.StopCampaign(id)
@@ -314,6 +483,10 @@ func handleUpdateCampaignArchive(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID") // Or any other header key where authid is stored
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	req := struct {
 		Archive     bool        `json:"archive"`
@@ -335,7 +508,7 @@ func handleUpdateCampaignArchive(c echo.Context) error {
 		req.ArchiveSlug = s
 	}
 
-	if err := app.core.UpdateCampaignArchive(id, req.Archive, req.TemplateID, req.Meta, req.ArchiveSlug); err != nil {
+	if err := app.core.UpdateCampaignArchive(id, req.Archive, req.TemplateID, req.Meta, req.ArchiveSlug, authID); err != nil {
 		return err
 	}
 
@@ -349,12 +522,17 @@ func handleDeleteCampaign(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
 
-	if err := app.core.DeleteCampaign(id); err != nil {
+	if err := app.core.DeleteCampaign(id, authID); err != nil {
 		return err
 	}
 
@@ -366,8 +544,13 @@ func handleGetRunningCampaignStats(c echo.Context) error {
 	var (
 		app = c.Get("app").(*App)
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
 
-	out, err := app.core.GetRunningCampaignStats()
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	out, err := app.core.GetRunningCampaignStats(authID)
 	if err != nil {
 		return err
 	}
@@ -409,11 +592,18 @@ func handleTestCampaign(c echo.Context) error {
 		tplID, _  = strconv.Atoi(c.FormValue("template_id"))
 		req       campaignReq
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	if campID < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.errorID"))
 	}
-
+	if err := initializeSettings(app, authID); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, app.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.settings}"))
+	}
 	// Get and validate fields.
 	if err := c.Bind(&req); err != nil {
 		return err
@@ -434,13 +624,13 @@ func handleTestCampaign(c echo.Context) error {
 		req.SubscriberEmails[i] = strings.ToLower(strings.TrimSpace(req.SubscriberEmails[i]))
 	}
 
-	subs, err := app.core.GetSubscribersByEmail(req.SubscriberEmails)
+	subs, err := app.core.GetSubscribersByEmail(req.SubscriberEmails, authID)
 	if err != nil {
 		return err
 	}
 
 	// The campaign.
-	camp, err := app.core.GetCampaignForPreview(campID, tplID)
+	camp, err := app.core.GetCampaignForPreview(campID, tplID, authID)
 	if err != nil {
 		return err
 	}
@@ -465,7 +655,7 @@ func handleTestCampaign(c echo.Context) error {
 	for _, s := range subs {
 		sub := s
 		c := camp
-		if err := sendTestMessage(sub, &c, app); err != nil {
+		if err := sendTestMessage(sub, &c, app, authID); err != nil {
 			app.log.Printf("error sending test message: %v", err)
 			return echo.NewHTTPError(http.StatusInternalServerError,
 				app.i18n.Ts("campaigns.errorSendTest", "error", err.Error()))
@@ -484,6 +674,11 @@ func handleGetCampaignViewAnalytics(c echo.Context) error {
 		from = c.QueryParams().Get("from")
 		to   = c.QueryParams().Get("to")
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	ids, err := parseStringIDs(c.Request().URL.Query()["id"])
 	if err != nil {
@@ -511,7 +706,7 @@ func handleGetCampaignViewAnalytics(c echo.Context) error {
 	}
 
 	// View, click, bounce stats.
-	out, err := app.core.GetCampaignAnalyticsCounts(ids, typ, from, to)
+	out, err := app.core.GetCampaignAnalyticsCounts(ids, typ, from, to, authID)
 	if err != nil {
 		return err
 	}
@@ -520,7 +715,7 @@ func handleGetCampaignViewAnalytics(c echo.Context) error {
 }
 
 // sendTestMessage takes a campaign and a subscriber and sends out a sample campaign message.
-func sendTestMessage(sub models.Subscriber, camp *models.Campaign, app *App) error {
+func sendTestMessage(sub models.Subscriber, camp *models.Campaign, app *App, authID string) error {
 	if err := camp.CompileTemplate(app.manager.TemplateFuncs(camp)); err != nil {
 		app.log.Printf("error compiling template: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
@@ -646,4 +841,70 @@ func makeOptinCampaignMessage(o campaignReq, app *App) (campaignReq, error) {
 
 	o.Body = b.String()
 	return o, nil
+}
+
+// GetCampaignReport retrieves the campaign reports.
+// If IDs are provided then, those specific campaign reports are returned, otherwise all campaign reports are returned.
+func handleGetCampaignsReport(c echo.Context) error {
+	var (
+		app     = c.Get("app").(*App)
+		orderBy = c.FormValue("order_by")
+		order   = c.FormValue("order")
+		status  = c.FormValue("status")
+	)
+
+	campaignIDs, err := getQueryInts("campaign_id", c.QueryParams())
+	if err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
+	}
+
+	authID := c.Request().Header.Get("X-Auth-ID")
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
+	fromDate := c.QueryParam("from_date")
+	toDate := c.QueryParam("to_date")
+	if fromDate != "" || toDate != "" {
+		RFC3339dateLayout := "2006-01-02"
+		fromdate, err := time.Parse(RFC3339dateLayout, fromDate)
+
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Please validate from date"})
+		}
+
+		todate, err := time.Parse(RFC3339dateLayout, toDate)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Please validate to date"})
+		}
+
+		now := time.Now()
+		if fromdate.After(now) || todate.After(now) {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "Dates cannot be in the future"})
+		}
+
+		if fromdate.After(todate) {
+			return c.JSON(http.StatusBadRequest, map[string]interface{}{"error": "To date should be after the from date. Please validate from & to date"})
+		}
+	}
+
+	logger.Debug("campaign report request", logger.LogFields{
+		"authID":      authID,
+		"campaignIDs": campaignIDs,
+		"order":       order,
+		"orderBy":     orderBy,
+		"status":      status,
+		"fromDate":    fromDate,
+		"toDate":      toDate,
+	})
+	campaigns, err := app.core.GetCampaignReport(campaignIDs, authID, order, orderBy, status, fromDate, toDate)
+	if err != nil {
+		return err
+	}
+
+	return c.JSON(http.StatusOK, map[string]interface{}{
+		"campaigns": campaigns,
+		"total":     len(campaigns),
+	})
+
 }

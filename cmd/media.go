@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"path/filepath"
@@ -29,6 +30,13 @@ func handleUploadMedia(c echo.Context) error {
 		app     = c.Get("app").(*App)
 		cleanUp = false
 	)
+
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+
 	file, err := c.FormFile("file")
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest,
@@ -53,9 +61,48 @@ func handleUploadMedia(c echo.Context) error {
 			app.i18n.Ts("media.invalidFileName", "name", file.Filename))
 	}
 
+	uploadProvider, err := app.core.GetUploadProvider(authID)
+	if err != nil {
+		return err
+	}
+	var uploadData map[string]interface{}
+	if uploadProvider == "filesystem" {
+		uploadData, err = app.core.GetFileSystemUploadData(authID)
+		if err != nil {
+			return err
+		}
+	} else {
+		uploadData, err = app.core.GetS3UploadData(authID)
+		if err != nil {
+			return err
+		}
+	}
+
+	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	app.media = initMediaStore(uploadProvider, uploadData)
+	if app.media == nil {
+		log.Println("app.media is nil during initialization")
+	}
+
+	app.manager = initCampaignManager(app.queries, app.constants, app)
+	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	for _, m := range initPostbackMessengers(app.manager) {
+		app.messengers[m.Name()] = m
+	}
+	for _, m := range app.messengers {
+		app.manager.AddMessenger(m)
+	}
+
+	extensions, err := app.core.GetExtensions(authID)
+	if err != nil {
+		cleanUp = true
+		return err
+	}
+
 	// Validate file extension.
-	if !inArray("*", app.constants.MediaUpload.Extensions) {
-		if ok := inArray(ext, app.constants.MediaUpload.Extensions); !ok {
+	if !inArray("*", extensions) {
+		ok := inArray(ext, extensions)
+		if !ok {
 			return echo.NewHTTPError(http.StatusBadRequest,
 				app.i18n.Ts("media.unsupportedFileType", "type", ext))
 		}
@@ -68,8 +115,16 @@ func handleUploadMedia(c echo.Context) error {
 	suffix, _ := generateRandomString(6)
 	fName = appendSuffixToFilename(fName, suffix)
 
+	filePath, err := app.core.GetFilePath(authID)
+	if err != nil {
+		cleanUp = true
+		return err
+	}
+	filePath = strings.Trim(filePath, "\"")
+	filePath = strings.TrimSpace(filePath)
+
 	// Upload the file.
-	fName, err = app.media.Put(fName, contentType, src)
+	fName, err = app.media.Put(fName, contentType, src, filePath)
 	if err != nil {
 		app.log.Printf("error uploading file: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
@@ -107,7 +162,7 @@ func handleUploadMedia(c echo.Context) error {
 		height = h
 
 		// Upload thumbnail.
-		tf, err := app.media.Put(thumbPrefix+fName, contentType, thumbFile)
+		tf, err := app.media.Put(thumbPrefix+fName, contentType, thumbFile, filePath)
 		if err != nil {
 			cleanUp = true
 			app.log.Printf("error saving thumbnail: %v", err)
@@ -128,7 +183,7 @@ func handleUploadMedia(c echo.Context) error {
 			"height": height,
 		}
 	}
-	m, err := app.core.InsertMedia(fName, thumbfName, contentType, meta, app.constants.MediaUpload.Provider, app.media)
+	m, err := app.core.InsertMedia(fName, thumbfName, contentType, meta, uploadProvider, app.media, authID)
 	if err != nil {
 		cleanUp = true
 		return err
@@ -145,16 +200,52 @@ func handleGetMedia(c echo.Context) error {
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
 
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
+	uploadProvider, err := app.core.GetUploadProvider(authID)
+	if err != nil {
+		return err
+	}
+	var uploadData map[string]interface{}
+	if uploadProvider == "filesystem" {
+		uploadData, err = app.core.GetFileSystemUploadData(authID)
+		if err != nil {
+			return err
+		}
+	} else {
+		uploadData, err = app.core.GetS3UploadData(authID)
+		if err != nil {
+			return err
+		}
+	}
+	initSettings("SELECT JSON_OBJECT_AGG(key, value) AS settings FROM settings WHERE authid = $1;", db, ko, authID)
+	app.media = initMediaStore(uploadProvider, uploadData)
+	if app.media == nil {
+		log.Println("app.media is nil during initialization")
+	}
+
+	app.manager = initCampaignManager(app.queries, app.constants, app)
+	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	for _, m := range initPostbackMessengers(app.manager) {
+		app.messengers[m.Name()] = m
+	}
+	for _, m := range app.messengers {
+		app.manager.AddMessenger(m)
+	}
+
 	// Fetch one list.
 	if id > 0 {
-		out, err := app.core.GetMedia(id, "", app.media)
+		out, err := app.core.GetMedia(id, "", app.media, authID)
 		if err != nil {
 			return err
 		}
 		return c.JSON(http.StatusOK, okResp{out})
 	}
 
-	res, total, err := app.core.QueryMedia(app.constants.MediaUpload.Provider, app.media, query, pg.Offset, pg.Limit)
+	res, total, err := app.core.QueryMedia(uploadProvider, app.media, query, pg.Offset, pg.Limit, authID)
 	if err != nil {
 		return err
 	}
@@ -175,18 +266,19 @@ func handleDeleteMedia(c echo.Context) error {
 		app   = c.Get("app").(*App)
 		id, _ = strconv.Atoi(c.Param("id"))
 	)
+	authID := c.Request().Header.Get("X-Auth-ID")
+
+	if authID == "" {
+		return echo.NewHTTPError(http.StatusBadRequest, "authid is required")
+	}
 
 	if id < 1 {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
 
-	fname, err := app.core.DeleteMedia(id)
-	if err != nil {
+	if err := app.core.DeleteMedia(id, authID); err != nil {
 		return err
 	}
-
-	app.media.Delete(fname)
-	app.media.Delete(thumbPrefix + fname)
 
 	return c.JSON(http.StatusOK, okResp{true})
 }

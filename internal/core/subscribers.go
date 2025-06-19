@@ -15,14 +15,14 @@ import (
 )
 
 // GetSubscriber fetches a subscriber by one of the given params.
-func (c *Core) GetSubscriber(id int, uuid, email string) (models.Subscriber, error) {
+func (c *Core) GetSubscriber(id int, uuid, email string, authID string) (models.Subscriber, error) {
 	var uu interface{}
 	if uuid != "" {
 		uu = uuid
 	}
 
 	var out models.Subscribers
-	if err := c.q.GetSubscriber.Select(&out, id, uu, email); err != nil {
+	if err := c.q.GetSubscriber.Select(&out, id, uu, email, authID); err != nil {
 		c.log.Printf("error fetching subscriber: %v", err)
 		return models.Subscriber{}, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching",
@@ -43,11 +43,36 @@ func (c *Core) GetSubscriber(id int, uuid, email string) (models.Subscriber, err
 	return out[0], nil
 }
 
+func (c *Core) GetSubscribersByAuthID(authID string) ([]models.Subscriber, error) {
+	// Create a slice to hold the subscribers
+	var out []models.Subscriber
+
+	// Query the database to get subscribers associated with the given authid
+	if err := c.q.GetSubscribersByAuthID.Select(&out, authID); err != nil {
+		c.log.Printf("error fetching subscribers for authid %s: %v", authID, err)
+		return nil, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching",
+				"name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+	}
+
+	// Log the number of subscribers found
+	c.log.Printf("Number of subscribers found for authid %s: %d", authID, len(out))
+
+	// Check if any subscribers were found
+	if len(out) == 0 {
+		return nil, echo.NewHTTPError(http.StatusNotFound,
+			c.i18n.Ts("globals.messages.notFound", "name",
+				fmt.Sprintf("{globals.terms.subscriber} for authid %s", authID)))
+	}
+
+	return out, nil
+}
+
 // GetSubscribersByEmail fetches a subscriber by one of the given params.
-func (c *Core) GetSubscribersByEmail(emails []string) (models.Subscribers, error) {
+func (c *Core) GetSubscribersByEmail(emails []string, authID string) (models.Subscribers, error) {
 	var out models.Subscribers
 
-	if err := c.q.GetSubscribersByEmails.Select(&out, pq.Array(emails)); err != nil {
+	if err := c.q.GetSubscribersByEmails.Select(&out, pq.Array(emails), authID); err != nil {
 		c.log.Printf("error fetching subscriber: %v", err)
 		return nil, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
@@ -66,7 +91,7 @@ func (c *Core) GetSubscribersByEmail(emails []string) (models.Subscribers, error
 }
 
 // QuerySubscribers queries and returns paginated subscrribers based on the given params including the total count.
-func (c *Core) QuerySubscribers(query string, listIDs []int, subStatus string, order, orderBy string, offset, limit int) (models.Subscribers, int, error) {
+func (c *Core) QuerySubscribers(query string, listIDs []int, subStatus string, order, orderBy string, offset, limit int, authID string) (models.Subscribers, int, error) {
 	// There's an arbitrary query condition.
 	cond := ""
 	if query != "" {
@@ -88,9 +113,18 @@ func (c *Core) QuerySubscribers(query string, listIDs []int, subStatus string, o
 
 	// Create a readonly transaction that just does COUNT() to obtain the count of results
 	// and to ensure that the arbitrary query is indeed readonly.
-	total, err := c.getSubscriberCount(cond, subStatus, listIDs)
+	stmt := fmt.Sprintf(c.q.QuerySubscribersCount, cond)
+	tx, err := c.db.BeginTxx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
-		return nil, 0, err
+		c.log.Printf("error preparing subscriber count query: %v", err)
+		return nil, 0, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("subscribers.errorPreparingQuery", "error", pqErrMsg(err)))
+	}
+	defer tx.Rollback()
+
+	total := 0
+	if err := tx.Get(&total, stmt, pq.Array(listIDs), subStatus, authID); err != nil {
+		return nil, 0, echo.NewHTTPError(http.StatusInternalServerError,
+			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
 	}
 
 	// No results.
@@ -100,18 +134,17 @@ func (c *Core) QuerySubscribers(query string, listIDs []int, subStatus string, o
 
 	// Run the query again and fetch the actual data. stmt is the raw SQL query.
 	var out models.Subscribers
-	stmt := fmt.Sprintf(c.q.QuerySubscribersCount, cond)
 	stmt = strings.ReplaceAll(c.q.QuerySubscribers, "%query%", cond)
 	stmt = strings.ReplaceAll(stmt, "%order%", orderBy+" "+order)
 
-	tx, err := c.db.BeginTxx(context.Background(), &sql.TxOptions{ReadOnly: true})
+	tx, err = c.db.BeginTxx(context.Background(), &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		c.log.Printf("error preparing subscriber query: %v", err)
 		return nil, 0, echo.NewHTTPError(http.StatusBadRequest, c.i18n.Ts("subscribers.errorPreparingQuery", "error", pqErrMsg(err)))
 	}
 	defer tx.Rollback()
 
-	if err := tx.Select(&out, stmt, pq.Array(listIDs), subStatus, offset, limit); err != nil {
+	if err := tx.Select(&out, stmt, pq.Array(listIDs), subStatus, offset, limit, authID); err != nil {
 		return nil, 0, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
 	}
@@ -127,7 +160,7 @@ func (c *Core) QuerySubscribers(query string, listIDs []int, subStatus string, o
 }
 
 // GetSubscriberLists returns a subscriber's lists based on the given conditions.
-func (c *Core) GetSubscriberLists(subID int, uuid string, listIDs []int, listUUIDs []string, subStatus string, listType string) ([]models.List, error) {
+func (c *Core) GetSubscriberLists(subID int, uuid string, listIDs []int, listUUIDs []string, subStatus string, listType string, authID string) ([]models.List, error) {
 	if listIDs == nil {
 		listIDs = []int{}
 	}
@@ -143,7 +176,7 @@ func (c *Core) GetSubscriberLists(subID int, uuid string, listIDs []int, listUUI
 	// Fetch double opt-in lists from the given list IDs.
 	// Get the list of subscription lists where the subscriber hasn't confirmed.
 	out := []models.List{}
-	if err := c.q.GetSubscriberLists.Select(&out, subID, uu, pq.Array(listIDs), pq.Array(listUUIDs), subStatus, listType); err != nil {
+	if err := c.q.GetSubscriberLists.Select(&out, subID, uu, pq.Array(listIDs), pq.Array(listUUIDs), subStatus, listType, authID); err != nil {
 		c.log.Printf("error fetching lists for opt-in: %s", pqErrMsg(err))
 		return nil, err
 	}
@@ -154,18 +187,22 @@ func (c *Core) GetSubscriberLists(subID int, uuid string, listIDs []int, listUUI
 // GetSubscriberProfileForExport returns the subscriber's profile data as a JSON exportable.
 // Get the subscriber's data. A single query that gets the profile, list subscriptions, campaign views,
 // and link clicks. Names of private lists are replaced with "Private list".
-func (c *Core) GetSubscriberProfileForExport(id int, uuid string) (models.SubscriberExportProfile, error) {
+func (c *Core) GetSubscriberProfileForExport(id int, uuid string, authID string) (models.SubscriberExportProfile, error) {
 	var uu interface{}
 	if uuid != "" {
 		uu = uuid
 	}
 
 	var out models.SubscriberExportProfile
-	if err := c.q.ExportSubscriberData.Get(&out, id, uu); err != nil {
+	if err := c.q.ExportSubscriberData.Get(&out, id, uu, authID); err != nil {
 		c.log.Printf("error fetching subscriber export data: %v", err)
 
 		return models.SubscriberExportProfile{}, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", err.Error()))
+	}
+	if out.Email == "" {
+		return models.SubscriberExportProfile{}, echo.NewHTTPError(http.StatusNotFound,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscribers}"))
 	}
 
 	return out, nil
@@ -175,7 +212,7 @@ func (c *Core) GetSubscriberProfileForExport(id int, uuid string) (models.Subscr
 // on the given criteria in an exportable form. The iterator function returned can be called
 // repeatedly until there are nil subscribers. It's an iterator because exports can be extremely
 // large and may have to be fetched in batches from the DB and streamed somewhere.
-func (c *Core) ExportSubscribers(query string, subIDs, listIDs []int, subStatus string, batchSize int) (func() ([]models.SubscriberExport, error), error) {
+func (c *Core) ExportSubscribers(query string, subIDs, listIDs []int, subStatus string, batchSize int, authID string) (func() ([]models.SubscriberExport, error), error) {
 	// There's an arbitrary query condition.
 	cond := ""
 	if query != "" {
@@ -219,7 +256,7 @@ func (c *Core) ExportSubscribers(query string, subIDs, listIDs []int, subStatus 
 	id := 0
 	return func() ([]models.SubscriberExport, error) {
 		var out []models.SubscriberExport
-		if err := tx.Select(&out, pq.Array(listIDs), id, pq.Array(subIDs), subStatus, batchSize); err != nil {
+		if err := tx.Select(&out, pq.Array(listIDs), id, pq.Array(subIDs), subStatus, batchSize, authID); err != nil {
 			c.log.Printf("error exporting subscribers by query: %v", err)
 			return nil, echo.NewHTTPError(http.StatusInternalServerError,
 				c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
@@ -236,7 +273,7 @@ func (c *Core) ExportSubscribers(query string, subIDs, listIDs []int, subStatus 
 // InsertSubscriber inserts a subscriber and returns the ID. The first bool indicates if
 // it was a new subscriber, and the second bool indicates if the subscriber was sent an optin confirmation.
 // bool = optinSent?
-func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs []string, preconfirm bool) (models.Subscriber, bool, error) {
+func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs []string, preconfirm bool, authID string) (models.Subscriber, bool, error) {
 	uu, err := uuid.NewV4()
 	if err != nil {
 		c.log.Printf("error generating UUID: %v", err)
@@ -244,6 +281,8 @@ func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs 
 			c.i18n.Ts("globals.messages.errorUUID", "error", err.Error()))
 	}
 	sub.UUID = uu.String()
+
+	sub.AuthID = authID
 
 	subStatus := models.SubscriptionStatusUnconfirmed
 	if preconfirm {
@@ -269,20 +308,33 @@ func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs 
 		sub.Attribs,
 		pq.Array(listIDs),
 		pq.Array(listUUIDs),
-		subStatus); err != nil {
-		if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "subscribers_email_key" {
-			return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
-		} else {
-			// return sub.Subscriber, errSubscriberExists
-			c.log.Printf("error inserting subscriber: %v", err)
-			return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
-				c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
-		}
+		subStatus,
+		sub.AuthID); err != nil {
+		// if pqErr, ok := err.(*pq.Error); ok {
+		// 	switch pqErr.Constraint {
+		// 	case "idx_subs_email_authid":
+		// 		return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+		// 	case "idx_subs_number_authid":
+		// 		return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, "number already exists")
+		// 	default:
+		// 		c.log.Printf("error inserting subscriber: %v", err)
+		// 		return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+		// 			c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+		// 	}
+		// }
+		// if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "idx_subs_email_authid" {
+		// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+		// } else {
+		// 	// return sub.Subscriber, errSubscriberExists
+		// 	c.log.Printf("error inserting subscriber: %v", err)
+		// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+		// 		c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+		// }
 	}
 
 	// Fetch the subscriber's full data. If the subscriber already existed and wasn't
 	// created, the id will be empty. Fetch the details by e-mail then.
-	out, err := c.GetSubscriber(sub.ID, "", sub.Email)
+	out, err := c.GetSubscriber(sub.ID, "", sub.Email, sub.AuthID)
 	if err != nil {
 		return models.Subscriber{}, false, err
 	}
@@ -298,7 +350,7 @@ func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs 
 }
 
 // UpdateSubscriber updates a subscriber's properties.
-func (c *Core) UpdateSubscriber(id int, sub models.Subscriber) (models.Subscriber, error) {
+func (c *Core) UpdateSubscriber(id int, sub models.Subscriber, authID string) (models.Subscriber, error) {
 	// Format raw JSON attributes.
 	attribs := []byte("{}")
 	if len(sub.Attribs) > 0 {
@@ -311,11 +363,14 @@ func (c *Core) UpdateSubscriber(id int, sub models.Subscriber) (models.Subscribe
 		}
 	}
 
+	sub.AuthID = authID
+
 	_, err := c.q.UpdateSubscriber.Exec(id,
 		sub.Email,
 		strings.TrimSpace(sub.Name),
 		sub.Status,
 		json.RawMessage(attribs),
+		sub.AuthID,
 	)
 	if err != nil {
 		c.log.Printf("error updating subscriber: %v", err)
@@ -323,7 +378,7 @@ func (c *Core) UpdateSubscriber(id int, sub models.Subscriber) (models.Subscribe
 			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
 	}
 
-	out, err := c.GetSubscriber(sub.ID, "", sub.Email)
+	out, err := c.GetSubscriber(sub.ID, "", sub.Email, sub.AuthID)
 	if err != nil {
 		return models.Subscriber{}, err
 	}
@@ -334,7 +389,7 @@ func (c *Core) UpdateSubscriber(id int, sub models.Subscriber) (models.Subscribe
 // UpdateSubscriberWithLists updates a subscriber's properties.
 // If deleteLists is set to true, all existing subscriptions are deleted and only
 // the ones provided are added or retained.
-func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs []int, listUUIDs []string, preconfirm, deleteLists bool) (models.Subscriber, bool, error) {
+func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs []int, listUUIDs []string, preconfirm, deleteLists bool, authID string) (models.Subscriber, bool, error) {
 	subStatus := models.SubscriptionStatusUnconfirmed
 	if preconfirm {
 		subStatus = models.SubscriptionStatusConfirmed
@@ -351,6 +406,7 @@ func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs 
 			attribs = b
 		}
 	}
+	sub.AuthID = authID
 
 	_, err := c.q.UpdateSubscriberWithLists.Exec(id,
 		sub.Email,
@@ -360,14 +416,32 @@ func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs 
 		pq.Array(listIDs),
 		pq.Array(listUUIDs),
 		subStatus,
-		deleteLists)
-	if err != nil {
-		c.log.Printf("error updating subscriber: %v", err)
-		return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
-			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
-	}
+		deleteLists,
+		sub.AuthID)
+	// if err != nil {
+	// c.log.Printf("error updating subscriber: %v", err)
+	// if pqErr, ok := err.(*pq.Error); ok {
+	// 	switch pqErr.Constraint {
+	// 	case "idx_subs_email_authid":
+	// 		return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+	// 	case "idx_subs_number_authid":
+	// 		return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, "number already exists")
+	// 	default:
+	// 		c.log.Printf("error inserting subscriber: %v", err)
+	// 		return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+	// 			c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+	// 	}
+	// }
+	// if pqErr, ok := err.(*pq.Error); ok && pqErr.Constraint == "idx_subs_email_authid" {
+	// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusConflict, c.i18n.T("subscribers.emailExists"))
+	// } else {
+	// 	c.log.Printf("error updating subscriber: %v", err)
+	// 	return models.Subscriber{}, false, echo.NewHTTPError(http.StatusInternalServerError,
+	// 		c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
+	// }
+	// }
 
-	out, err := c.GetSubscriber(sub.ID, "", sub.Email)
+	out, err := c.GetSubscriber(sub.ID, "", sub.Email, sub.AuthID)
 	if err != nil {
 		return models.Subscriber{}, false, err
 	}
@@ -383,19 +457,26 @@ func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs 
 }
 
 // BlocklistSubscribers blocklists the given list of subscribers.
-func (c *Core) BlocklistSubscribers(subIDs []int) error {
-	if _, err := c.q.BlocklistSubscribers.Exec(pq.Array(subIDs)); err != nil {
+func (c *Core) BlocklistSubscribers(subIDs []int, authID string) error {
+	res, err := c.q.BlocklistSubscribers.Exec(pq.Array(subIDs), authID)
+
+	if err != nil {
 		c.log.Printf("error blocklisting subscribers: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("subscribers.errorBlocklisting", "error", err.Error()))
+	}
+
+	if n, _ := res.RowsAffected(); n == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscribers}"))
 	}
 
 	return nil
 }
 
 // BlocklistSubscribersByQuery blocklists the given list of subscribers.
-func (c *Core) BlocklistSubscribersByQuery(query string, listIDs []int, subStatus string) error {
-	if err := c.q.ExecSubQueryTpl(sanitizeSQLExp(query), c.q.BlocklistSubscribersByQuery, listIDs, c.db, subStatus); err != nil {
+func (c *Core) BlocklistSubscribersByQuery(query string, listIDs []int, subStatus string, authID string) error {
+	if err := c.q.ExecSubQueryTpl(sanitizeSQLExp(query), c.q.BlocklistSubscribersByQuery, listIDs, c.db, subStatus, authID); err != nil {
 		c.log.Printf("error blocklisting subscribers: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("subscribers.errorBlocklisting", "error", pqErrMsg(err)))
@@ -405,7 +486,7 @@ func (c *Core) BlocklistSubscribersByQuery(query string, listIDs []int, subStatu
 }
 
 // DeleteSubscribers deletes the given list of subscribers.
-func (c *Core) DeleteSubscribers(subIDs []int, subUUIDs []string) error {
+func (c *Core) DeleteSubscribers(subIDs []int, subUUIDs []string, authID string) error {
 	if subIDs == nil {
 		subIDs = []int{}
 	}
@@ -413,18 +494,25 @@ func (c *Core) DeleteSubscribers(subIDs []int, subUUIDs []string) error {
 		subUUIDs = []string{}
 	}
 
-	if _, err := c.q.DeleteSubscribers.Exec(pq.Array(subIDs), pq.Array(subUUIDs)); err != nil {
+	res, err := c.q.DeleteSubscribers.Exec(pq.Array(subIDs), pq.Array(subUUIDs), authID)
+
+	if err != nil {
 		c.log.Printf("error deleting subscribers: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorDeleting", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
+	}
+
+	if n, _ := res.RowsAffected(); n == 0 {
+		return echo.NewHTTPError(http.StatusBadRequest,
+			c.i18n.Ts("globals.messages.notFound", "name", "{globals.terms.subscribers}"))
 	}
 
 	return nil
 }
 
 // DeleteSubscribersByQuery deletes subscribers by a given arbitrary query expression.
-func (c *Core) DeleteSubscribersByQuery(query string, listIDs []int, subStatus string) error {
-	err := c.q.ExecSubQueryTpl(sanitizeSQLExp(query), c.q.DeleteSubscribersByQuery, listIDs, c.db, subStatus)
+func (c *Core) DeleteSubscribersByQuery(query string, listIDs []int, subStatus string, authID string) error {
+	err := c.q.ExecSubQueryTpl(sanitizeSQLExp(query), c.q.DeleteSubscribersByQuery, listIDs, c.db, subStatus, authID)
 	if err != nil {
 		c.log.Printf("error deleting subscribers: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
@@ -435,8 +523,8 @@ func (c *Core) DeleteSubscribersByQuery(query string, listIDs []int, subStatus s
 }
 
 // UnsubscribeByCampaign unsubscribes a given subscriber from lists in a given campaign.
-func (c *Core) UnsubscribeByCampaign(subUUID, campUUID string, blocklist bool) error {
-	if _, err := c.q.UnsubscribeByCampaign.Exec(campUUID, subUUID, blocklist); err != nil {
+func (c *Core) UnsubscribeByCampaign(subUUID, campUUID string, blocklist bool, authID string) error {
+	if _, err := c.q.UnsubscribeByCampaign.Exec(campUUID, subUUID, blocklist, authID); err != nil {
 		c.log.Printf("error unsubscribing: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
@@ -446,12 +534,12 @@ func (c *Core) UnsubscribeByCampaign(subUUID, campUUID string, blocklist bool) e
 }
 
 // ConfirmOptionSubscription confirms a subscriber's optin subscription.
-func (c *Core) ConfirmOptionSubscription(subUUID string, listUUIDs []string, meta models.JSON) error {
+func (c *Core) ConfirmOptionSubscription(subUUID string, listUUIDs []string, meta models.JSON, authID string) error {
 	if meta == nil {
 		meta = models.JSON{}
 	}
 
-	if _, err := c.q.ConfirmSubscriptionOptin.Exec(subUUID, pq.Array(listUUIDs), meta); err != nil {
+	if _, err := c.q.ConfirmSubscriptionOptin.Exec(subUUID, pq.Array(listUUIDs), meta, authID); err != nil {
 		c.log.Printf("error confirming subscription: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
@@ -461,13 +549,13 @@ func (c *Core) ConfirmOptionSubscription(subUUID string, listUUIDs []string, met
 }
 
 // DeleteSubscriberBounces deletes the given list of subscribers.
-func (c *Core) DeleteSubscriberBounces(id int, uuid string) error {
+func (c *Core) DeleteSubscriberBounces(id int, uuid string, authID string) error {
 	var uu interface{}
 	if uuid != "" {
 		uu = uuid
 	}
 
-	if _, err := c.q.DeleteBouncesBySubscriber.Exec(id, uu); err != nil {
+	if _, err := c.q.DeleteBouncesBySubscriber.Exec(id, uu, authID); err != nil {
 		c.log.Printf("error deleting bounces: %v", err)
 		return echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorDeleting", "name", "{globals.terms.bounces}", "error", pqErrMsg(err)))
@@ -477,8 +565,8 @@ func (c *Core) DeleteSubscriberBounces(id int, uuid string) error {
 }
 
 // DeleteOrphanSubscribers deletes orphan subscriber records (subscribers without lists).
-func (c *Core) DeleteOrphanSubscribers() (int, error) {
-	res, err := c.q.DeleteOrphanSubscribers.Exec()
+func (c *Core) DeleteOrphanSubscribers(authID string) (int, error) {
+	res, err := c.q.DeleteOrphanSubscribers.Exec(authID)
 	if err != nil {
 		c.log.Printf("error deleting orphan subscribers: %v", err)
 		return 0, echo.NewHTTPError(http.StatusInternalServerError,
@@ -490,8 +578,8 @@ func (c *Core) DeleteOrphanSubscribers() (int, error) {
 }
 
 // DeleteBlocklistedSubscribers deletes blocklisted subscribers.
-func (c *Core) DeleteBlocklistedSubscribers() (int, error) {
-	res, err := c.q.DeleteBlocklistedSubscribers.Exec()
+func (c *Core) DeleteBlocklistedSubscribers(authID string) (int, error) {
+	res, err := c.q.DeleteBlocklistedSubscribers.Exec(authID)
 	if err != nil {
 		c.log.Printf("error deleting blocklisted subscribers: %v", err)
 		return 0, echo.NewHTTPError(http.StatusInternalServerError,
@@ -502,13 +590,13 @@ func (c *Core) DeleteBlocklistedSubscribers() (int, error) {
 	return int(n), nil
 }
 
-func (c *Core) getSubscriberCount(cond, subStatus string, listIDs []int) (int, error) {
+func (c *Core) getSubscriberCount(cond, subStatus string, listIDs []int, authId string) (int, error) {
 	// If there's no condition, it's a "get all" call which can probably be optionally pulled from cache.
 	if cond == "" {
 		_ = c.refreshCache(matListSubStats, false)
 
 		total := 0
-		if err := c.q.QuerySubscribersCountAll.Get(&total, pq.Array(listIDs), subStatus); err != nil {
+		if err := c.q.QuerySubscribersCountAll.Get(&total, pq.Array(listIDs), subStatus, authId); err != nil {
 			return 0, echo.NewHTTPError(http.StatusInternalServerError,
 				c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
 		}
@@ -528,7 +616,7 @@ func (c *Core) getSubscriberCount(cond, subStatus string, listIDs []int) (int, e
 
 	// Execute the readonly query and get the count of results.
 	total := 0
-	if err := tx.Get(&total, stmt, pq.Array(listIDs), subStatus); err != nil {
+	if err := tx.Get(&total, stmt, pq.Array(listIDs), subStatus, authId); err != nil {
 		return 0, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching", "name", "{globals.terms.subscribers}", "error", pqErrMsg(err)))
 	}

@@ -136,8 +136,17 @@ func getLastMigrationVersion() (string, error) {
 	var v string
 	if err := db.Get(&v, `
 		SELECT COALESCE(
-			(SELECT value->>-1 FROM settings WHERE key='migrations'),
-		'v0.0.0')`); err != nil {
+			(SELECT value->>-1 FROM settings WHERE key='migrations'
+                AND authid IN (
+                    SELECT authid
+                    FROM settings
+                    WHERE key = 'migrations'
+                    GROUP BY authid
+                    HAVING COUNT(*) = 1
+                )
+                LIMIT 1
+            ),
+            'v0.0.0')`); err != nil {
 		if isTableNotExistErr(err) {
 			return "v0.0.0", nil
 		}
