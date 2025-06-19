@@ -22,11 +22,12 @@ CREATE TABLE subscribers (
     updated_at      TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     authid          VARCHAR NOT NULL DEFAULT 'auth_id'
 );
-DROP INDEX IF EXISTS idx_subs_email;
-DROP INDEX IF EXISTS idx_subs_email_authid; CREATE UNIQUE INDEX idx_subs_email_authid ON subscribers(LOWER(email), authid);
+-- DROP INDEX IF EXISTS idx_subs_email;
+-- DROP INDEX IF EXISTS idx_subs_email_authid; CREATE UNIQUE INDEX idx_subs_email_authid ON subscribers(LOWER(email), authid) WHERE email IS NOT NULL AND email <> '';
 DROP INDEX IF EXISTS idx_subs_status; CREATE INDEX idx_subs_status ON subscribers(status);
 DROP INDEX IF EXISTS idx_subs_created_at; CREATE INDEX idx_subs_created_at ON subscribers(created_at);
 DROP INDEX IF EXISTS idx_subs_updated_at; CREATE INDEX idx_subs_updated_at ON subscribers(updated_at);
+-- DROP INDEX IF EXISTS idx_subs_number_authid; CREATE UNIQUE INDEX idx_subs_number_authid ON subscribers ((LOWER(attribs->>'number')), authid) WHERE attribs ? 'number' AND attribs->>'number' IS NOT NULL AND attribs->>'number' <> '';
 
 -- lists
 DROP TABLE IF EXISTS lists CASCADE;

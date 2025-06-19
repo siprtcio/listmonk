@@ -259,55 +259,55 @@ func (c *Core) CreateCampaign(o models.Campaign, listIDs []int, mediaIDs []int, 
 	}
 
 	// Apply default values based on campaign type and voice option
-	switch o.Messenger {
-	case "voice":
-		switch voiceOption {
-		case "template":
-			// Template-based voice campaign requires template ID and list ID
-			// Template ID and list IDs are already validated as required, so no defaults here
-		case "music":
-			// Music-based voice campaign requires music ID
-			if o.MusicID == "" {
-				return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Music ID is required for music-based voice campaigns.")
-			}
-		case "text-to-speech":
-			// Text-to-speech requires body, vendor, loop, voice, and language
-			if o.Body == "" {
-				return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Body is required for TTS campaigns.")
-			}
-			if o.Vendor == "" {
-				o.Vendor = "aws"
-			}
-			if o.Loop == 0 {
-				o.Loop = 1 // Default loop count
-			}
-			if o.Voice == "" {
-				o.Voice = "woman"
-			}
-			if o.Language == "" {
-				o.Language = "en-US"
-			}
-		}
-	case "email":
-		// Email campaign requires subject, body, from_email
-		if o.Subject == "" {
-			return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Subject is required for email campaigns.")
-		}
-		if o.Body == "" {
-			return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Body is required for email campaigns.")
-		}
-		if o.FromEmail == "" {
-			return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "From email is required for email campaigns.")
-		}
-	case "sms":
-		// SMS campaign requires from, body
-		if o.FromPhone == "" {
-			return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "From email is required for SMS campaigns.")
-		}
-		if o.Body == "" {
-			return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Body is required for SMS campaigns.")
-		}
-	}
+	// switch o.Messenger {
+	// case "voice":
+	// 	switch voiceOption {
+	// 	case "template":
+	// 		// Template-based voice campaign requires template ID and list ID
+	// 		// Template ID and list IDs are already validated as required, so no defaults here
+	// 	case "music":
+	// 		// Music-based voice campaign requires music ID
+	// 		if o.MusicID == "" {
+	// 			return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Music ID is required for music-based voice campaigns.")
+	// 		}
+	// 	case "text-to-speech":
+	// 		// Text-to-speech requires body, vendor, loop, voice, and language
+	// 		if o.Body == "" {
+	// 			return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Body is required for TTS campaigns.")
+	// 		}
+	// 		if o.Vendor == "" {
+	// 			o.Vendor = "aws"
+	// 		}
+	// 		if o.Loop == 0 {
+	// 			o.Loop = 1 // Default loop count
+	// 		}
+	// 		if o.Voice == "" {
+	// 			o.Voice = "woman"
+	// 		}
+	// 		if o.Language == "" {
+	// 			o.Language = "en-US"
+	// 		}
+	// 	}
+	// case "email":
+	// 	// Email campaign requires subject, body, from_email
+	// 	if o.Subject == "" {
+	// 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Subject is required for email campaigns.")
+	// 	}
+	// 	if o.Body == "" {
+	// 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Body is required for email campaigns.")
+	// 	}
+	// 	if o.FromEmail == "" {
+	// 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "From email is required for email campaigns.")
+	// 	}
+	// case "sms":
+	// 	// SMS campaign requires from, body
+	// 	if o.FromPhone == "" {
+	// 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "From email is required for SMS campaigns.")
+	// 	}
+	// 	if o.Body == "" {
+	// 		return models.Campaign{}, echo.NewHTTPError(http.StatusBadRequest, "Body is required for SMS campaigns.")
+	// 	}
+	// }
 
 	var out1 types.JSONText
 	if err := c.q.CheckInsertCampaignValidData.Get(&out1, o.Name, o.AuthID, o.TemplateID, pq.Array(mediaIDs), pq.Array(listIDs)); err != nil {
@@ -513,7 +513,6 @@ func (c *Core) UpdateCampaignArchive(id int, enabled bool, tplID int, meta model
 		} else {
 			c.log.Printf("error updating campaign: %v", err)
 
-			
 			return echo.NewHTTPError(http.StatusInternalServerError,
 				c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.campaign}", "error", pqErrMsg(err)))
 		}

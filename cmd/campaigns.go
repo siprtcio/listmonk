@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -61,6 +62,7 @@ func initializeSettings(app *App, authID string) error {
 	}
 	app.manager = initCampaignManager(app.queries, app.constants, app)
 	app.messengers[emailMsgr] = initSMTPMessenger(app.manager)
+	log.Println("Calling postback messengers")
 	for _, m := range initPostbackMessengers(app.manager) {
 		app.messengers[m.Name()] = m
 	}
@@ -311,45 +313,45 @@ func handleCreateCampaign(c echo.Context) error {
 	}
 
 	// Initialize new fields for voice campaigns
-	if o.Messenger == "voice" {
-		if o.VoiceOption == "" {
-			return echo.NewHTTPError(http.StatusBadRequest, "Voice option is required for voice campaigns")
-		}
+	// if o.Messenger == "voice" {
+	// 	if o.VoiceOption == "" {
+	// 		return echo.NewHTTPError(http.StatusBadRequest, "Voice option is required for voice campaigns")
+	// 	}
 
-		// Validate the voice option and set the appropriate fields
-		switch o.VoiceOption {
-		case "template":
-			// Handle template option (Ensure template ID is provided)
-			o.Body = "-" // Not required for template option
-		case "music":
-			// Handle music option
-			if o.MusicID == "" {
-				return echo.NewHTTPError(http.StatusBadRequest, "Music ID is required for music option.")
-			}
-			o.Body = "-" // Assuming Body is not required for music
-		case "text-to-speech":
-			// Handle text-to-speech option
-			if o.Body == "" {
-				return echo.NewHTTPError(http.StatusBadRequest, "Body text is required for text-to-speech option.")
-			}
-			// Set additional fields like Vendor and Language if needed
-			if o.Vendor == "" {
-				o.Vendor = "aws" // Default vendor
-			}
-			if o.Language == "" {
-				o.Language = "en-US" // Default language
-			}
-		default:
-			return echo.NewHTTPError(http.StatusBadRequest, "Invalid voice option provided.")
-		}
-	} else {
-		// If messenger is email or SMS, leave new fields empty
-		o.MusicID = "-"
-		o.Vendor = "-"
-		o.Loop = 0
-		o.Body = "-"
-		o.Language = "-"
-	}
+	// 	// Validate the voice option and set the appropriate fields
+	// 	switch o.VoiceOption {
+	// 	case "template":
+	// 		// Handle template option (Ensure template ID is provided)
+	// 		o.Body = "-" // Not required for template option
+	// 	case "music":
+	// 		// Handle music option
+	// 		if o.MusicID == "" {
+	// 			return echo.NewHTTPError(http.StatusBadRequest, "Music ID is required for music option.")
+	// 		}
+	// 		o.Body = "-" // Assuming Body is not required for music
+	// 	case "text-to-speech":
+	// 		// Handle text-to-speech option
+	// 		if o.Body == "" {
+	// 			return echo.NewHTTPError(http.StatusBadRequest, "Body text is required for text-to-speech option.")
+	// 		}
+	// 		// Set additional fields like Vendor and Language if needed
+	// 		if o.Vendor == "" {
+	// 			o.Vendor = "aws" // Default vendor
+	// 		}
+	// 		if o.Language == "" {
+	// 			o.Language = "en-US" // Default language
+	// 		}
+	// 	default:
+	// 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid voice option provided.")
+	// 	}
+	// } else {
+	// 	// If messenger is email or SMS, leave new fields empty
+	// 	o.MusicID = "-"
+	// 	o.Vendor = "-"
+	// 	o.Loop = 0
+	// 	o.Body = "-"
+	// 	o.Language = "-"
+	// }
 
 	// Check and set ArchiveTemplateID if not provided
 	if o.ArchiveTemplateID == 0 {

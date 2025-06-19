@@ -7,6 +7,7 @@ import (
 	"github.com/knadh/listmonk/internal/core"
 	"github.com/knadh/listmonk/internal/manager"
 	"github.com/knadh/listmonk/internal/media"
+	"github.com/knadh/listmonk/logger"
 	"github.com/knadh/listmonk/models"
 	"github.com/lib/pq"
 )
@@ -40,6 +41,17 @@ func (s *store) NextCampaigns(currentIDs []int64, sentCounts []int64) ([]*models
 func (s *store) GetMessengerByAuthId(AuthID string, Messenger string) (string, error) {
 	var out string
 	err := s.queries.GetMessengerByAuthID.Get(&out, AuthID, Messenger)
+	if err != nil {
+		logger.Error("Error fetching root URL for AuthID", logger.LogFields{
+			"Campaign Name": AuthID,
+			"Messenger":     Messenger,
+		})
+	}
+	logger.Info("Sending message in campaign", logger.LogFields{
+		"AuthID":    AuthID,
+		"Messenger": Messenger,
+		"URL":       out,
+	})
 	return out, err
 }
 

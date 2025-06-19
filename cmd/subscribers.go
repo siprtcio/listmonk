@@ -240,11 +240,11 @@ func handleCreateSubscriber(c echo.Context) error {
 		return err
 	}
 
-	// Validate fields.
-	req, err := app.importer.ValidateFields(req)
-	if err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	}
+	// // Validate fields.
+	// req, err := app.importer.ValidateFields(req)
+	// if err != nil {
+	// 	return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	// }
 
 	// Insert the subscriber into the DB.
 	sub, _, err := app.core.InsertSubscriber(req.Subscriber, req.Lists, req.ListUUIDs, req.PreconfirmSubs, authID)
@@ -281,15 +281,15 @@ func handleUpdateSubscriber(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
 
-	if em, err := app.importer.SanitizeEmail(req.Email); err != nil {
-		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
-	} else {
-		req.Email = em
-	}
+	// if em, err := app.importer.SanitizeEmail(req.Email); err != nil {
+	// 	return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	// } else {
+	// 	req.Email = em
+	// }
 
-	if req.Name != "" && !strHasLen(req.Name, 1, stdInputMaxLen) {
-		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("subscribers.invalidName"))
-	}
+	// if req.Name != "" && !strHasLen(req.Name, 1, stdInputMaxLen) {
+	// 	return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("subscribers.invalidName"))
+	// }
 
 	out, _, err := app.core.UpdateSubscriberWithLists(id, req.Subscriber, req.Lists, nil, req.PreconfirmSubs, true, authID)
 	if err != nil {
