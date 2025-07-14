@@ -13,7 +13,7 @@ DROP TABLE IF EXISTS subscribers CASCADE;
 CREATE TABLE subscribers (
     id              SERIAL PRIMARY KEY,
     uuid uuid       NOT NULL UNIQUE,
-    email           TEXT NOT NULL,
+    email           NULL,
     name            TEXT NOT NULL,
     attribs         JSONB NOT NULL DEFAULT '{}',
     status          subscriber_status NOT NULL DEFAULT 'enabled',

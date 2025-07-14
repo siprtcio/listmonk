@@ -15,14 +15,14 @@ import (
 )
 
 // GetSubscriber fetches a subscriber by one of the given params.
-func (c *Core) GetSubscriber(id int, uuid, email string, authID string) (models.Subscriber, error) {
+func (c *Core) GetSubscriber(id int, uuid, email string, number string, authID string) (models.Subscriber, error) {
 	var uu interface{}
 	if uuid != "" {
 		uu = uuid
 	}
 
 	var out models.Subscribers
-	if err := c.q.GetSubscriber.Select(&out, id, uu, email, authID); err != nil {
+	if err := c.q.GetSubscriber.Select(&out, id, uu, email, number, authID); err != nil {
 		c.log.Printf("error fetching subscriber: %v", err)
 		return models.Subscriber{}, echo.NewHTTPError(http.StatusInternalServerError,
 			c.i18n.Ts("globals.messages.errorFetching",
@@ -334,7 +334,7 @@ func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs 
 
 	// Fetch the subscriber's full data. If the subscriber already existed and wasn't
 	// created, the id will be empty. Fetch the details by e-mail then.
-	out, err := c.GetSubscriber(sub.ID, "", sub.Email, sub.AuthID)
+	out, err := c.GetSubscriber(sub.ID, "", sub.Email, "", sub.AuthID)
 	if err != nil {
 		return models.Subscriber{}, false, err
 	}
@@ -378,7 +378,7 @@ func (c *Core) UpdateSubscriber(id int, sub models.Subscriber, authID string) (m
 			c.i18n.Ts("globals.messages.errorUpdating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
 	}
 
-	out, err := c.GetSubscriber(sub.ID, "", sub.Email, sub.AuthID)
+	out, err := c.GetSubscriber(sub.ID, "", sub.Email, "", sub.AuthID)
 	if err != nil {
 		return models.Subscriber{}, err
 	}
@@ -404,6 +404,12 @@ func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs 
 					"name", "{globals.terms.subscriber}", "error", err.Error()))
 		} else {
 			attribs = b
+		}
+	}
+	var number string
+	if sub.Attribs != nil {
+		if n, ok := sub.Attribs["number"].(string); ok {
+			number = n
 		}
 	}
 	sub.AuthID = authID
@@ -441,7 +447,7 @@ func (c *Core) UpdateSubscriberWithLists(id int, sub models.Subscriber, listIDs 
 	// }
 	// }
 
-	out, err := c.GetSubscriber(sub.ID, "", sub.Email, sub.AuthID)
+	out, err := c.GetSubscriber(sub.ID, "", sub.Email, number, sub.AuthID)
 	if err != nil {
 		return models.Subscriber{}, false, err
 	}

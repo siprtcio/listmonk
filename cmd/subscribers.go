@@ -79,7 +79,7 @@ func handleGetSubscriber(c echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, app.i18n.T("globals.messages.invalidID"))
 	}
 
-	out, err := app.core.GetSubscriber(id, "", "", authID)
+	out, err := app.core.GetSubscriber(id, "", "", "", authID)
 	if err != nil {
 		return err
 	}
@@ -316,7 +316,7 @@ func handleSubscriberSendOptin(c echo.Context) error {
 	}
 
 	// Fetch the subscriber.
-	out, err := app.core.GetSubscriber(id, "", "", authID)
+	out, err := app.core.GetSubscriber(id, "", "", "", authID)
 	if err != nil {
 		return err
 	}
