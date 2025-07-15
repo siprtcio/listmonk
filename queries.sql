@@ -6,9 +6,10 @@ SELECT * FROM subscribers WHERE
     ( 
         ($1 > 0 AND id = $1) OR 
         ($2 != '' AND uuid = $2::UUID) OR 
-        ($3 != '' AND email = $3)
+        ($3 != '' AND email = $3)OR
+        ($4 != '' AND attribs->>'number' = $4)
     ) 
-    AND authid = $4;
+    AND authid = $5;
 
 --name: get-subscriber-authid
 SELECT * 

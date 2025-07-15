@@ -172,7 +172,7 @@ func handleViewCampaignMessage(c echo.Context) error {
 	}
 
 	// Get the subscriber.
-	sub, err := app.core.GetSubscriber(0, subUUID, "", authID)
+	sub, err := app.core.GetSubscriber(0, subUUID, "", "", authID)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return c.Render(http.StatusNotFound, tplMessage,
@@ -277,7 +277,7 @@ func handleSubscriptionPage(c echo.Context) error {
 	out.AllowWipe = app.constants.Privacy.AllowWipe
 	out.AllowPreferences = app.constants.Privacy.AllowPreferences
 
-	s, err := app.core.GetSubscriber(0, subUUID, "", authID)
+	s, err := app.core.GetSubscriber(0, subUUID, "", "", authID)
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, tplMessage,
 			makeMsgTpl(app.i18n.T("public.errorTitle"), "", app.i18n.Ts("public.errorProcessingRequest")))
@@ -367,7 +367,7 @@ func handleSubscriptionPrefs(c echo.Context) error {
 	}
 
 	// Get the subscriber from the DB.
-	sub, err := app.core.GetSubscriber(0, subUUID, "", authID)
+	sub, err := app.core.GetSubscriber(0, subUUID, "", "", authID)
 	if err != nil {
 		return c.Render(http.StatusInternalServerError, tplMessage,
 			makeMsgTpl(app.i18n.T("public.errorTitle"), "", app.i18n.Ts("globals.messages.pFound",
@@ -715,7 +715,7 @@ func handleSelfExportSubscriberData(c echo.Context) error {
 				Header:  manager.MakeAttachmentHeader(fname, "base64", "application/json"),
 			},
 		},
-	},""); err != nil {
+	}, ""); err != nil {
 		app.log.Printf("error e-mailing subscriber profile: %s", err)
 		return c.Render(http.StatusInternalServerError, tplMessage,
 			makeMsgTpl(app.i18n.T("public.errorTitle"), "", app.i18n.Ts("public.errorProcessingRequest")))
@@ -824,7 +824,7 @@ func processSubForm(c echo.Context) (bool, error) {
 	if err != nil {
 		// Subscriber already exists. Update subscriptions.
 		if e, ok := err.(*echo.HTTPError); ok && e.Code == http.StatusConflict {
-			sub, err := app.core.GetSubscriber(0, "", req.Email, "")
+			sub, err := app.core.GetSubscriber(0, "", req.Email, "", "")
 			if err != nil {
 				return false, err
 			}
