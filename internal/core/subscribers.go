@@ -31,7 +31,7 @@ func (c *Core) GetSubscriber(id int, uuid, email string, number string, authID s
 	if len(out) == 0 {
 		return models.Subscriber{}, echo.NewHTTPError(http.StatusBadRequest,
 			c.i18n.Ts("globals.messages.notFound", "name",
-				fmt.Sprintf("{globals.terms.subscriber} (%d: %s%s)", id, uuid, email)))
+				fmt.Sprintf("{globals.terms.subscriber} (%d: %s%s%s)", id, uuid, email, number)))
 	}
 	if err := out.LoadLists(c.q.GetSubscriberListsLazy); err != nil {
 		c.log.Printf("error loading subscriber lists: %v", err)
@@ -331,10 +331,15 @@ func (c *Core) InsertSubscriber(sub models.Subscriber, listIDs []int, listUUIDs 
 		// 		c.i18n.Ts("globals.messages.errorCreating", "name", "{globals.terms.subscriber}", "error", pqErrMsg(err)))
 		// }
 	}
-
+	var number string
+	if sub.Attribs != nil {
+		if n, ok := sub.Attribs["number"].(string); ok {
+			number = n
+		}
+	}
 	// Fetch the subscriber's full data. If the subscriber already existed and wasn't
 	// created, the id will be empty. Fetch the details by e-mail then.
-	out, err := c.GetSubscriber(sub.ID, "", sub.Email, "", sub.AuthID)
+	out, err := c.GetSubscriber(sub.ID, "", sub.Email, number, sub.AuthID)
 	if err != nil {
 		return models.Subscriber{}, false, err
 	}
